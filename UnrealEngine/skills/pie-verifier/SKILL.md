@@ -55,3 +55,7 @@ Call `stop_pie_session` when the verification completes.
 * **Filter Queries:** Always specify `classes` or `tags` when calling `query_world_state` to keep the context clean and avoid exceeding token limits.
 * **Wait for Loading:** Give the engine 1-2 seconds after map loads or starting PIE before expecting widgets to be drawn or actors to fully possess.
 * **Dynamic Path Lookup:** Do not hardcode button paths across different maps. Always call `extract_ui_state` first to discover the exact widget instance names (e.g., widget instances might end with `_C_0`, `_C_1`, etc.).
+* **Progression State Validation:** If main menu or game flow buttons are unexpectedly disabled (e.g., Singleplayer button greyed out), verify that required progression registries (like `DA_ProgressionRegistry`) have valid starting unlocks (e.g., Capital Ships) registered.
+* **Save-Game Isolation:** When testing run-based or roguelite game modes (e.g. Singleplayer Challenges), check for and isolate persistent save games (`Saved/SaveGames/*.sav`). Stale save games often trigger modal overwrite confirmation dialogs (`UAsyncAction_ShowConfirmation`) that intercept automated input.
+* **Hold-to-Activate Inputs:** For buttons or input actions that require holding (e.g. `IA_StartRound`), use `simulate_input` with `action_type: "down"`, wait the required hold duration using the native `schedule` tool, and then send `action_type: "up"`. Alternatively, check if the screen provides a direct debug bypass method (e.g., `DebugStartRound()`).
+

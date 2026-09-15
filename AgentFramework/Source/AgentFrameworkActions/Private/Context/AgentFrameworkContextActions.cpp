@@ -13,6 +13,9 @@
 
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
+#include "Misc/PackageName.h"
+#include "UObject/UObjectIterator.h"
+#include "UObject/SavePackage.h"
 
 #if WITH_EDITOR
 #include "Editor.h"
@@ -20,9 +23,9 @@
 #include "EditorAssetLibrary.h"
 #include "Subsystems/EditorAssetSubsystem.h"
 #include "ObjectTools.h"
+#include "Factories/Factory.h"
+#include "Factories/DataAssetFactory.h"
 #endif
-
-
 
 FAgentFrameworkContextActions::FAgentFrameworkContextActions() {}
 FAgentFrameworkContextActions::~FAgentFrameworkContextActions() {}
@@ -39,7 +42,8 @@ TArray<FString> FAgentFrameworkContextActions::GetSupportedToolNames() const
 		TEXT("enforce_naming_conventions"),
 		TEXT("organize_assets_by_type"),
 		TEXT("consolidate_asset_references"),
-		TEXT("delete_asset")
+		TEXT("delete_asset"),
+		TEXT("create_asset")
 	};
 }
 
@@ -92,6 +96,10 @@ FAgentFrameworkActionResult FAgentFrameworkContextActions::ExecuteAction(const T
 	else if (Action == TEXT("delete_asset"))
 	{
 		Result = ExecuteDeleteAsset(Params, Result);
+	}
+	else if (Action == TEXT("create_asset"))
+	{
+		Result = ExecuteCreateAsset(Params, Result);
 	}
 	else
 	{
@@ -1067,6 +1075,318 @@ FAgentFrameworkActionResult FAgentFrameworkContextActions::ExecuteDeleteAsset(co
 #endif
 	return Result;
 }
+
+#if WITH_EDITOR
+static UClass* ResolveAssetClass(const FString& InClassName)
+{
+	if (InClassName.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	FString ClassName = InClassName.TrimStartAndEnd();
+
+	// 1. Try direct StaticLoadClass or LoadObject (full paths or /Script/... paths or Blueprint classes)
+	UClass* FoundClass = StaticLoadClass(UObject::StaticClass(), nullptr, *ClassName);
+	if (IsValid(FoundClass))
+	{
+		return FoundClass;
+	}
+
+	FoundClass = LoadObject<UClass>(nullptr, *ClassName, nullptr, LOAD_NoWarn, nullptr);
+	if (IsValid(FoundClass))
+	{
+		return FoundClass;
+	}
+
+	// 2. Strip 'U' or 'A' prefix if present for FName search
+	FString StrippedName = ClassName;
+	if ((ClassName.StartsWith(TEXT("U")) || ClassName.StartsWith(TEXT("A"))) && ClassName.Len() > 1 && FChar::IsUpper(ClassName[1]))
+	{
+		StrippedName = ClassName.RightChop(1);
+	}
+
+	// 3. Try FindFirstObject with both original and stripped names
+	FoundClass = FindFirstObject<UClass>(*ClassName, EFindFirstObjectOptions::NativeFirst);
+	if (IsValid(FoundClass))
+	{
+		return FoundClass;
+	}
+
+	FoundClass = FindFirstObject<UClass>(*StrippedName, EFindFirstObjectOptions::NativeFirst);
+	if (IsValid(FoundClass))
+	{
+		return FoundClass;
+	}
+
+	// 4. Try common UE module package paths
+	static const TArray<FString> CommonPackagePrefixes = {
+		TEXT("/Script/Engine."),
+		TEXT("/Script/CoreUObject."),
+		TEXT("/Script/Niagara."),
+		TEXT("/Script/EnhancedInput."),
+		TEXT("/Script/PhysicsCore."),
+		TEXT("/Script/AudioPlatformConfiguration."),
+		TEXT("/Script/MetasoundEngine."),
+		TEXT("/Script/PCG."),
+		TEXT("/Script/StateTreeModule."),
+		TEXT("/Script/GameplayAbilities."),
+		TEXT("/Script/GameplayTags."),
+		TEXT("/Script/AIModule."),
+		TEXT("/Script/UMG."),
+		TEXT("/Script/CinematicCamera."),
+		TEXT("/Script/LevelSequence."),
+		TEXT("/Script/MovieScene.")
+	};
+
+	for (const FString& Prefix : CommonPackagePrefixes)
+	{
+		FoundClass = LoadObject<UClass>(nullptr, *(Prefix + StrippedName), nullptr, LOAD_NoWarn, nullptr);
+		if (IsValid(FoundClass))
+		{
+			return FoundClass;
+		}
+		FoundClass = LoadObject<UClass>(nullptr, *(Prefix + ClassName), nullptr, LOAD_NoWarn, nullptr);
+		if (IsValid(FoundClass))
+		{
+			return FoundClass;
+		}
+	}
+
+	// 5. Search over loaded UClasses
+	for (TObjectIterator<UClass> It; It; ++It)
+	{
+		UClass* Candidate = *It;
+		if (IsValid(Candidate))
+		{
+			if (Candidate->GetName().Equals(StrippedName, ESearchCase::IgnoreCase) ||
+				Candidate->GetName().Equals(ClassName, ESearchCase::IgnoreCase))
+			{
+				return Candidate;
+			}
+		}
+	}
+
+	return nullptr;
+}
+
+static UFactory* ResolveFactoryForClass(UClass* TargetClass, const FString& InFactoryClassName)
+{
+	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
+
+	// 1. If explicit factory class name provided
+	if (!InFactoryClassName.IsEmpty())
+	{
+		UClass* FactoryClass = ResolveAssetClass(InFactoryClassName);
+		if (IsValid(FactoryClass) && FactoryClass->IsChildOf(UFactory::StaticClass()))
+		{
+			UFactory* ExplicitFactory = NewObject<UFactory>(GetTransientPackage(), FactoryClass);
+			if (IsValid(ExplicitFactory))
+			{
+				return ExplicitFactory;
+			}
+		}
+	}
+
+	// 2. Query AssetTools registered new asset factories
+	const TArray<UFactory*>& RegisteredFactories = AssetTools.GetNewAssetFactories();
+	UFactory* BestFactory = nullptr;
+
+	for (UFactory* CandidateFactory : RegisteredFactories)
+	{
+		if (!IsValid(CandidateFactory))
+		{
+			continue;
+		}
+
+		UClass* SupportedClass = CandidateFactory->GetSupportedClass();
+		if (IsValid(SupportedClass))
+		{
+			if (SupportedClass == TargetClass)
+			{
+				BestFactory = NewObject<UFactory>(GetTransientPackage(), CandidateFactory->GetClass());
+				break;
+			}
+			else if (TargetClass->IsChildOf(SupportedClass) && !BestFactory)
+			{
+				BestFactory = NewObject<UFactory>(GetTransientPackage(), CandidateFactory->GetClass());
+			}
+		}
+	}
+
+	// 3. If no registered factory found, try convention-based lookup: <ClassName>FactoryNew or <ClassName>Factory
+	if (!BestFactory && IsValid(TargetClass))
+	{
+		FString BaseName = TargetClass->GetName();
+		TArray<FString> PotentialNames = {
+			BaseName + TEXT("FactoryNew"),
+			BaseName + TEXT("Factory"),
+			TEXT("U") + BaseName + TEXT("FactoryNew"),
+			TEXT("U") + BaseName + TEXT("Factory")
+		};
+
+		for (const FString& FactoryName : PotentialNames)
+		{
+			UClass* FactoryClass = ResolveAssetClass(FactoryName);
+			if (IsValid(FactoryClass) && FactoryClass->IsChildOf(UFactory::StaticClass()))
+			{
+				BestFactory = NewObject<UFactory>(GetTransientPackage(), FactoryClass);
+				break;
+			}
+		}
+	}
+
+	// 4. Configure factory properties for known base types if needed
+	if (IsValid(BestFactory) && IsValid(TargetClass))
+	{
+		if (UDataAssetFactory* DataAssetFactory = Cast<UDataAssetFactory>(BestFactory))
+		{
+			DataAssetFactory->DataAssetClass = TargetClass;
+		}
+		else
+		{
+			FObjectProperty* DataAssetClassProp = CastField<FObjectProperty>(BestFactory->GetClass()->FindPropertyByName(TEXT("DataAssetClass")));
+			if (DataAssetClassProp)
+			{
+				DataAssetClassProp->SetPropertyValue_InContainer(BestFactory, TargetClass);
+			}
+		}
+	}
+
+	return BestFactory;
+}
+#endif
+
+FAgentFrameworkActionResult FAgentFrameworkContextActions::ExecuteCreateAsset(const TSharedRef<FJsonObject>& Params, FAgentFrameworkActionResult& Result)
+{
+#if WITH_EDITOR
+	FString AssetPath;
+	if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("asset_path"), AssetPath, Result.Errors, false))
+	{
+		FString PackagePath, AssetName;
+		if (UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("package_path"), PackagePath, Result.Errors, false) &&
+			UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("asset_name"), AssetName, Result.Errors, false))
+		{
+			AssetPath = PackagePath.EndsWith(TEXT("/")) ? (PackagePath + AssetName) : (PackagePath + TEXT("/") + AssetName);
+		}
+	}
+
+	if (AssetPath.IsEmpty())
+	{
+		Result.Errors.Add(TEXT("Missing required parameter: asset_path (or package_path and asset_name)."));
+		return Result;
+	}
+
+	FString PackageName, PackagePath, AssetName;
+	UAgentFrameworkActionUtils::SplitAssetPath(AssetPath, PackageName, PackagePath, AssetName);
+
+	if (AssetName.IsEmpty() || PackagePath.IsEmpty())
+	{
+		Result.Errors.Add(FString::Printf(
+			TEXT("asset_path '%s' does not name an asset. Provide a full path including the asset name, e.g. /Game/Data/DA_Item."),
+			*AssetPath));
+		return Result;
+	}
+
+	// Check if asset already exists
+	UObject* ExistingAsset = LoadObject<UObject>(nullptr, *FString::Printf(TEXT("%s.%s"), *PackageName, *AssetName));
+	if (IsValid(ExistingAsset))
+	{
+		Result.bSuccess = true;
+		Result.ResultMessage = FString::Printf(TEXT("Asset '%s' already exists of class '%s'."), *AssetName, *ExistingAsset->GetClass()->GetName());
+		Result.ModifiedAssets.Add(AssetPath);
+		return Result;
+	}
+
+	FString ClassName;
+	if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("asset_class"), ClassName, Result.Errors, false))
+	{
+		if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("class_name"), ClassName, Result.Errors, false))
+		{
+			if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("AssetClass"), ClassName, Result.Errors, false))
+			{
+				UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("ClassName"), ClassName, Result.Errors, false);
+			}
+		}
+	}
+
+	if (ClassName.IsEmpty())
+	{
+		Result.Errors.Add(TEXT("Missing required parameter: asset_class (or class_name)."));
+		return Result;
+	}
+
+	UClass* TargetClass = ResolveAssetClass(ClassName);
+	if (!IsValid(TargetClass))
+	{
+		Result.Errors.Add(FString::Printf(
+			TEXT("Class '%s' could not be found. Ensure the class name is correct or module/plugin is loaded."),
+			*ClassName));
+		return Result;
+	}
+
+	FString FactoryClassName;
+	UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("factory_class"), FactoryClassName, Result.Errors, false);
+
+	UFactory* Factory = ResolveFactoryForClass(TargetClass, FactoryClassName);
+
+	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
+
+	UObject* NewAsset = nullptr;
+	if (IsValid(Factory))
+	{
+		NewAsset = AssetTools.CreateAsset(AssetName, PackagePath, TargetClass, Factory);
+	}
+	else
+	{
+		NewAsset = AssetTools.CreateAsset(AssetName, PackagePath, TargetClass, nullptr);
+	}
+
+	if (!IsValid(NewAsset))
+	{
+		UPackage* Package = CreatePackage(*PackageName);
+		if (IsValid(Package))
+		{
+			NewAsset = NewObject<UObject>(Package, TargetClass, FName(*AssetName), RF_Public | RF_Standalone | RF_Transactional);
+			if (IsValid(NewAsset))
+			{
+				FAssetRegistryModule::AssetCreated(NewAsset);
+			}
+		}
+	}
+
+	if (!IsValid(NewAsset))
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Failed to create asset '%s' of class '%s'."), *AssetPath, *TargetClass->GetName()));
+		return Result;
+	}
+
+	NewAsset->Modify();
+	UPackage* Package = NewAsset->GetOutermost();
+	if (IsValid(Package))
+	{
+		Package->MarkPackageDirty();
+
+		FString PackageFilename;
+		if (FPackageName::TryConvertLongPackageNameToFilename(Package->GetName(), PackageFilename, FPackageName::GetAssetPackageExtension()))
+		{
+			FSavePackageArgs SaveArgs;
+			SaveArgs.TopLevelFlags = RF_Standalone;
+			UPackage::SavePackage(Package, NewAsset, *PackageFilename, SaveArgs);
+		}
+	}
+
+	FAssetRegistryModule::AssetCreated(NewAsset);
+
+	Result.bSuccess = true;
+	Result.ResultMessage = FString::Printf(TEXT("Successfully created asset '%s' of class '%s'."), *AssetPath, *TargetClass->GetName());
+	Result.ModifiedAssets.Add(AssetPath);
+#else
+	Result.Errors.Add(TEXT("Asset creation is only supported in the Editor."));
+#endif
+	return Result;
+}
+
 
 
 

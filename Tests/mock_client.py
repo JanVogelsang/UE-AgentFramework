@@ -1,4 +1,5 @@
 import json
+import time
 import requests
 import queue
 import threading
@@ -61,10 +62,14 @@ class MockAgentClient:
             
             # Read initialization response line-by-line
             init_response = None
-            while True:
-                line = self.python_reader.readline(timeout=10.0)
+            start_wait = time.time()
+            while time.time() - start_wait < 30.0:
+                line = self.python_reader.readline(timeout=5.0)
                 if line is None:
-                    break
+                    if python_process.poll() is not None:
+                        stderr_out = python_process.stderr.read() if python_process.stderr else ""
+                        raise RuntimeError(f"Python MCP server exited prematurely with code {python_process.returncode}: {stderr_out}")
+                    continue
                 try:
                     data = json.loads(line)
                     if data.get("id") == init_request["id"]:
@@ -74,7 +79,8 @@ class MockAgentClient:
                     pass
             
             if not init_response:
-                raise RuntimeError("Failed to receive initialization response from Python MCP server.")
+                stderr_out = python_process.stderr.read() if python_process.stderr else ""
+                raise RuntimeError(f"Failed to receive initialization response from Python MCP server within 30s. Stderr: {stderr_out}")
                 
             initialized_notification = {
                 "jsonrpc": "2.0",

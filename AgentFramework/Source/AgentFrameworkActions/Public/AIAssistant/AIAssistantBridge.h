@@ -41,7 +41,7 @@ public:
 	FAIAssistantQueryCompletedDynamicSignature OnQueryCompletedDynamic;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AgentFramework|AIAssistant")
-	class USoundBase* QueryCompletedSound;
+	TObjectPtr<class USoundBase> QueryCompletedSound;
 
 private:
 	TSharedPtr<SWebBrowser> FindWebBrowserWidget();

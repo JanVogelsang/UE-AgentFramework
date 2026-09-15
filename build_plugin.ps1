@@ -38,6 +38,10 @@ param (
 )
 
 $ErrorActionPreference = "Stop"
+$env:uebp_UATMutexNoWait = "1"
+$env:UBT_bAllowUBA = "0"
+[System.Environment]::SetEnvironmentVariable("uebp_UATMutexNoWait", "1", "Process")
+[System.Environment]::SetEnvironmentVariable("UBT_bAllowUBA", "0", "Process")
 
 # Get absolute path for repository root
 $RepoRoot = Resolve-Path $PSScriptRoot
@@ -142,7 +146,7 @@ if (-not [System.IO.Path]::IsPathRooted($OutputPath)) {
     $AbsoluteOutputPath = $OutputPath
 }
 
-$PackagedPluginDir = Join-Path $AbsoluteOutputPath "AgentFramework"
+$PackagedPluginDir = Join-Path $AbsoluteOutputPath ("AFBuild_" + (Get-Date -Format "HHmmss") + "\AgentFramework")
 if (Test-Path $AbsoluteOutputPath) {
     Write-Host "`nCleaning existing output directory '$AbsoluteOutputPath'..." -ForegroundColor Cyan
     # A build that has just finished can still be releasing handles under this directory. Failing
@@ -170,21 +174,14 @@ if (Test-Path $AbsoluteOutputPath) {
 New-Item -ItemType Directory -Path $AbsoluteOutputPath -Force | Out-Null
 
 # 4. Invoke UAT to build and package the plugin
-Write-Host "`nStarting BuildPlugin compilation and packaging via RunUAT..." -ForegroundColor Cyan
-Write-Host "Command: & '$RunUAT' BuildPlugin -plugin='$UpluginPath' -package='$PackagedPluginDir' -Rocket" -ForegroundColor DarkGray
-
-# We use Start-Process to run RunUAT in order to correctly stream the output and handle exit codes
-$ProcessParams = @{
-    FilePath     = $RunUAT
-    ArgumentList = "BuildPlugin -plugin=`"$UpluginPath`" -package=`"$PackagedPluginDir`" -Rocket -NoMutex"
-    NoNewWindow  = $true
-    Wait         = $true
-    PassThru     = $true
+$UbtLogPath = Join-Path $env:LOCALAPPDATA "UnrealBuildTool\Log.txt"
+if (Test-Path $UbtLogPath) {
+    Remove-Item -Path $UbtLogPath -Force -ErrorAction SilentlyContinue
 }
 
-$Process = Start-Process @ProcessParams
-if ($Process.ExitCode -ne 0) {
-    Write-Error "BuildPlugin failed with exit code $($Process.ExitCode)"
+& $RunUAT BuildPlugin -plugin="$UpluginPath" -package="$PackagedPluginDir" -Rocket -NoMutex
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "BuildPlugin failed with exit code $LASTEXITCODE"
 }
 
 Write-Host "Build and packaging completed successfully!" -ForegroundColor Green

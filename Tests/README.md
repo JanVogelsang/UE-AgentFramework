@@ -5,7 +5,7 @@ This directory contains the end-to-end integration tests for the AgentFramework 
 ## Overview
 
 The test framework connects:
-1. **Internal C++ MCP Server**: Running inside Unreal Engine Editor (spawning `UnrealEditor-Cmd.exe` or reusing a running instance). It communicates via HTTP POST requests on port `18777`.
+1. **Internal C++ MCP Server**: Running inside Unreal Engine Editor (spawning `UnrealEditor-Cmd.exe` or reusing a running instance). It communicates via HTTP POST requests on port `18777` (default, configurable, or auto-discovered via endpoint file).
 2. **External Indexing & RAG MCP Server (Python)**: Running as a standalone process communicating via JSON-RPC 2.0 over standard input/output.
 
 ## Directory Structure

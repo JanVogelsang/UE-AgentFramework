@@ -5,25 +5,36 @@
   "tools": [
     {
       "name": "create_data_asset",
-      "description": "Create a new Data Asset instance of a specific class (e.g. UPrimaryDataAsset or a custom Blueprint data asset class). Useful for structural game data like item properties, character stats, or ability definitions.",
+      "description": "Create a new Data Asset instance of a specific class (e.g. UPrimaryDataAsset, UDataAsset subclass, or a custom Blueprint data asset class). Useful for structural game data like item properties, character stats, or ability definitions.",
       "input_schema": {
         "type": "object",
         "properties": {
           "asset_path": {
             "type": "string",
-            "description": "Content path for the new Data Asset (e.g. '/Game/Data/DA_IceSword')"
+            "description": "Full content path for the new Data Asset (e.g. '/Game/Data/DA_IceSword'). Alternatively specify package_path and asset_name."
+          },
+          "package_path": {
+            "type": "string",
+            "description": "Package folder path for the new Data Asset (e.g. '/Game/Data')"
+          },
+          "asset_name": {
+            "type": "string",
+            "description": "Asset name for the new Data Asset (e.g. 'DA_IceSword')"
           },
           "class_name": {
             "type": "string",
-            "description": "Class name or path of the Data Asset subclass (e.g. 'UMyItemData' or '/Game/Blueprints/BP_ItemData.BP_ItemData_C')"
+            "description": "Class name or path of the Data Asset subclass (e.g. 'UMyItemData' or '/Game/Blueprints/BP_ItemData.BP_ItemData_C'). Alias: data_asset_class."
+          },
+          "data_asset_class": {
+            "type": "string",
+            "description": "Alias for class_name (e.g. 'UnitSquadDataAsset')."
           }
-        },
-        "required": ["asset_path", "class_name"]
+        }
       }
     },
     {
       "name": "set_data_asset_properties",
-      "description": "Set property values on an existing Data Asset via reflection. Property values are parsed as strings (e.g. '120.5', 'true', '(R=1,G=0,B=0,A=1)' for color, or asset path strings for object references).",
+      "description": "Set property values on an existing Data Asset via reflection. Property values can be strings, numbers, booleans, arrays, or JSON objects representing nested C++ structs.",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -33,10 +44,65 @@
           },
           "properties": {
             "type": "object",
-            "description": "Key-value pairs of exact property names and their string-serialized values."
+            "description": "Key-value pairs of property names and their values (primitives, arrays, or nested struct objects)."
           }
         },
         "required": ["asset_path", "properties"]
+      }
+    },
+    {
+      "name": "set_uobject_properties",
+      "description": "Set reflection property values on any loaded UObject or DataAsset asset in the Content Browser (including nested struct properties, arrays, booleans, and numbers).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "asset_path": {
+            "type": "string",
+            "description": "Content path of the target UObject / DataAsset (e.g. '/Game/Data/DA_IceSword')"
+          },
+          "properties": {
+            "type": "object",
+            "description": "Key-value pairs of exact property names and their values (primitives, arrays, or nested struct objects)."
+          }
+        },
+        "required": ["asset_path", "properties"]
+      }
+    },
+    {
+      "name": "add_instanced_subobject",
+      "description": "Instantiate an inline UObject subobject (EditInlineNew / Instanced), configure its properties, and append it to an array property or set it on an object property of a target UObject or DataAsset.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "parent_asset_path": {
+            "type": "string",
+            "description": "Content path of the parent DataAsset or UObject (e.g. '/Game/Data/Upgrades/DA_Bio_Hull'). Alias: asset_path."
+          },
+          "asset_path": {
+            "type": "string",
+            "description": "Alias for parent_asset_path."
+          },
+          "array_property_name": {
+            "type": "string",
+            "description": "Name of the TArray or UObject property on the parent asset (e.g. 'UpgradeSpecifications'). Alias: property_name."
+          },
+          "property_name": {
+            "type": "string",
+            "description": "Alias for array_property_name."
+          },
+          "subobject_class": {
+            "type": "string",
+            "description": "Class name of the subobject to instantiate (e.g. 'NumericalUnitUpgrade' or 'UGunUpgradeSpecification'). Alias: class_name."
+          },
+          "class_name": {
+            "type": "string",
+            "description": "Alias for subobject_class."
+          },
+          "properties": {
+            "type": "object",
+            "description": "Key-value pairs of initial properties to set on the created subobject."
+          }
+        }
       }
     },
     {

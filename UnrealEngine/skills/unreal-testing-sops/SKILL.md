@@ -168,3 +168,114 @@ When writing latent commands that search for widgets (e.g., waiting for screen a
   }
   ```
 
+---
+
+## SOP-004: Singleplayer Progression & Match Flow Testing
+
+### Goal
+Verify the Singleplayer Challenge run flow from the Main Menu through Capital Ship/Fleet selection, handle suspended save games cleanly, and transition into the Fleet Management screen.
+
+### Prerequisites
+- `DA_ProgressionRegistry` (`/Game/Data/Progression/DA_ProgressionRegistry.uasset`) must register all valid Capital Ships (`DA_Capital_Dreadnought`, `DA_Capital_Hyperion`, `DA_Capital_Leviathan`, `DA_Capital_Archangel`) with `bUnlocked = true` to prevent the Singleplayer Challenges button from being disabled.
+- INI audio maps in `Config/DefaultGame.ini` must use valid `((Key1,Value1),(Key2,Value2))` Unreal syntax.
+
+### Execution Workflow
+
+1. **Start PIE Session**:
+   - Tool: `start_pie_session`
+2. **Handle Existing Suspended Runs**:
+   - Singleplayer runs persist to `Saved/SaveGames/CurrentRunState_SP.sav`.
+   - If a saved run exists, clicking "Singleplayer Challenges" opens an overwrite confirmation modal (`W_ConfirmationDefault` / `Start New Run?`).
+   - *Option A (Clean New Run)*: Delete `CurrentRunState_SP.sav` before testing to guarantee direct transition without modal intervention.
+   - *Option B (Continue Existing Run)*: Trigger the `SingleplayerContinueButton` (`slate_scommonbutton_*` labeled "Continue") which calls `StartShopFlow(true, false)`.
+   - *Option C (Confirm Overwrite)*: If the modal appears, click the "Yes" button (`ECommonMessagingResult::Confirmed`) to invoke `ExecuteStartMatchFlow`.
+3. **Trigger Singleplayer Match Flow**:
+   - Trigger the "Singleplayer Challenges" button:
+     - Tool: `trigger_ui_element` on the button path retrieved from `extract_ui_state`.
+     - Or Python: `state_comp.start_match_flow(match_class)` where `match_class = BP_SingleplayerMatchInstance_C`.
+4. **Verify Transition to Fleet Management**:
+   - Wait 4-6 seconds for `W_FleetManagementUI` to instantiate.
+   - Tool: `get_active_runtime_widgets` -> verify `W_FleetManagementUI_C_0` is present, visible, and has active input focus.
+
+---
+
+## SOP-005: End-to-End Combat Simulation Testing (`L_Round`)
+
+### Goal
+Transition from the Fleet Management Phase into the automated physical combat simulation (`L_Round`), verify squad and gun visualization spawning, simulate combat via Mass ECS, and verify the Post-Battle Round End sequence.
+
+### Prerequisites
+- All gun data assets in `/Game/Data/Guns/` MUST have a valid `VisualizationAsset` assigned from `/Game/EntityRepresentations/DataAssets/Guns/DA_Rep_*`. A missing visualization asset causes Mass entity representation instantiation to fail.
+- At least one active squad must be placed on the hex grid (`ActiveSquadIDs.Num() > 0`) to enable round start.
+
+### Execution Workflow
+
+1. **Verify Fleet Management Pre-Conditions**:
+   - Ensure `StartRoundButton` is enabled (`ActiveSquadIDs.Num() > 0`).
+2. **Trigger Round Start**:
+   - Normal gameplay uses an input hold gesture (`IA_StartRound` held for `StartRoundHoldRequiredDuration`).
+   - *Method A (Simulate Input Hold)*:
+     - Tool: `simulate_input` -> `key`: `"SpaceBar"`, `action_type`: `"down"`
+     - Wait 2.0-3.0 seconds (using `schedule` with `DurationSeconds`).
+     - Tool: `simulate_input` -> `key`: `"SpaceBar"`, `action_type`: `"up"`
+   - *Method B (Direct Debug Function)*:
+     - Execute `DebugStartRound()` directly on the active `UFleetManagementUI` instance.
+3. **Verify Level Transition to `L_Round`**:
+   - Wait 5-8 seconds for `L_Round` level load and Mass ECS world subsystems initialization.
+   - Tool: `read_message_log` -> Verify:
+     - `NS_UnitRepresentation` and `NS_GunRepresentation` compile cleanly.
+     - `SpawnGunsForSquad` reports all mounted guns `Valid=1`.
+     - 0 critical errors or access violation logs.
+4. **Accelerate Combat Simulation**:
+   - In `L_Round`, combat unfolds automatically. To avoid long idle test durations, accelerate time dilation:
+     - Tool: `simulate_input` on `GameSpeedButtonFast` or invoke `ATauRoundPlayerController::SetGameSpeedBypassingPawn(EGameSpeed::TIMES_THREE)` via Python.
+5. **Verify Combat Progression & Resolution**:
+   - Tool: `get_active_runtime_widgets` -> Verify battle HUD elements (`W_RoundHUD_C_0`, `W_Minimap_C`, `GameSpeedSelectionWidget`).
+   - Wait for units on one side to be destroyed.
+   - Verify that `UGameLoopSubsystem::NotifyRoundEnd()` executes, audio stingers fire, and `RoundEndScreenClass` (`UTauRoundEndWidget`) is pushed to the HUD layer.
+
+---
+
+## SOP-006: Diagnostic & Null-Safety Guardrail Protocol
+
+### Goal
+Prevent unhandled Access Violation crashes during automated testing and live gameplay through strict defensive coding patterns.
+
+### Mandatory Developer Guardrails
+
+1. **MatchInstance Safety in UI Constructors**:
+   - `UTauGameInstance::GetMatchInstance()` can return `nullptr` during standalone UI testing, early initialization, or level loading.
+   - **RULE**: Never chain `GetMatchInstance()->GetMapGridSize()` without a null check.
+   - **Pattern**:
+     ```cpp
+     TPair<float, float> FleetGridDimensions(10.f, 10.f);
+     if (UTauGameInstance* TauGI = GetWorld() ? GetWorld()->GetGameInstance<UTauGameInstance>() : nullptr)
+     {
+         if (UMatchInstance* MatchInst = TauGI->GetMatchInstance())
+         {
+             FleetGridDimensions = MatchInst->GetMapGridSize();
+         }
+     }
+     ```
+
+2. **Mouse Hover & Dynamic Upgrade Slot Validation**:
+   - Slate synthetic mouse move events can hover over empty upgrade slots or uninitialized widgets.
+   - **RULE**: Methods receiving `UUnitSquadUpgradeDataAsset*` or `UUpgradeSlot*` (such as `OnUpgradeSlotHovered` and `AreUnitAttributesMatchingUpgradeRequirements`) MUST null-check the incoming upgrade pointer before dereferencing requirements or properties.
+   - **Pattern**:
+     ```cpp
+     if (!Upgrade)
+     {
+         return false;
+     }
+     ```
+
+3. **Niagara Representation Asset Contract**:
+   - `UNiagaraRepresentationSubsystem::GetOrCreateRepresentationClass()` keys representations by `Sprite->GetFName()`.
+   - **RULE**: Never pass an unverified or null `Sprite` pointer into representation creation. Maintain defensive null checking at the subsystem boundary.
+
+4. **Unreal INI TMap Delimiter Syntax**:
+   - Unreal Engine's `FMapProperty::ImportText_Internal` does NOT support INI line additions (`+MapKey=(Key=...,Value=...)`).
+   - **RULE**: Multi-entry TMaps in `DefaultGame.ini` must be formatted on a single line using parentheses pairs:
+     ```ini
+     MapProperty=((Key1,Value1),(Key2,Value2),(Key3,Value3))
+     ```

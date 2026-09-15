@@ -1,6 +1,6 @@
 # AgentFramework Unreal Engine Plugin
 
-This is the Unreal Engine plugin component of the **UE-AgentFramework** integration. It exposes an in-process HTTP loopback server (listening on port `18777`) to execute commands safely on the Game Thread, allowing the AgentFramework AI coding assistant to natively interact with your Unreal Editor.
+This is the Unreal Engine plugin component of the **UE-AgentFramework** integration. It exposes an in-process HTTP loopback server (listening on port `18777` by default, configurable via `-AgentFrameworkPort=` or `AGENTFRAMEWORK_HTTP_PORT`) to execute commands safely on the Game Thread, allowing the AgentFramework AI coding assistant to natively interact with your Unreal Editor.
 
 *(Note: The MCP servers that communicate with the AI assistant, including the C++ Bridge and the External Python AST Server, are located in the `UnrealEngine` directory of this repository.)*
 
@@ -27,9 +27,9 @@ To distribute the plugin or upload it to Epic's **Fab** marketplace, it needs to
 1. Open PowerShell at the repository root.
 2. Run the build script:
    ```powershell
-   .\build_plugin.ps1 -UEVersion "5.4"
+   .\build_plugin.ps1 -UEVersion "5.8"
    ```
-   *Replace `"5.4"` with your installed Unreal Engine version (e.g., `"5.3"`, `"5.5"`).*
+   *Replace `"5.8"` with your installed Unreal Engine version (e.g., `"5.7"`, `"5.8"`).*
 
 This script will:
 - Clean any previous `Binaries/`, `Intermediate/`, and `Saved/` folders.

@@ -251,6 +251,42 @@
           "asset_path"
         ]
       }
+    },
+    {
+      "name": "create_asset",
+      "description": "Universally create any new Unreal Engine asset by class name (e.g. 'NiagaraDataChannelAsset', 'NiagaraEffectType', 'InputMappingContext', 'InputAction', 'CurveFloat', 'CurveVector', 'CurveLinearColor', 'PhysicalMaterial', 'SoundCue', 'SoundAttenuation', 'MaterialParameterCollection', 'DataAsset', or any custom C++/Blueprint asset class). Dynamically discovers and instantiates the correct factory, or creates the package asset natively.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "asset_path": {
+            "type": "string",
+            "description": "Full content path for the new asset (e.g. '/Game/VFX/NDC_Impacts' or '/Game/Input/IMC_Default'). Alternatively provide package_path and asset_name."
+          },
+          "package_path": {
+            "type": "string",
+            "description": "Package folder path for the new asset (e.g. '/Game/VFX')"
+          },
+          "asset_name": {
+            "type": "string",
+            "description": "Asset name for the new asset (e.g. 'NDC_Impacts')"
+          },
+          "asset_class": {
+            "type": "string",
+            "description": "Class name of the asset to create (e.g. 'NiagaraDataChannelAsset', 'NiagaraEffectType', 'InputMappingContext', 'InputAction', 'PhysicalMaterial', 'CurveFloat', 'MaterialParameterCollection'). Aliases: class_name, ClassName, AssetClass."
+          },
+          "class_name": {
+            "type": "string",
+            "description": "Alias for asset_class."
+          },
+          "factory_class": {
+            "type": "string",
+            "description": "Optional specific factory class name to instantiate (e.g. 'NiagaraDataChannelAssetFactoryNew' or 'PhysicalMaterialFactoryNew'). If omitted, automatically discovered."
+          }
+        },
+        "required": [
+          "asset_path"
+        ]
+      }
     }
   ]
 }

@@ -68,7 +68,7 @@ Instead of embedding a chat UI in the editor, we expose the editor to external a
 └─────────────────────────────────┘
 ```
 
-- **Internal C++ MCP server** — an in-editor HTTP loopback server (port `18777`) that runs Game-Thread operations in real time: reading and editing Blueprints, injecting T3D node graphs, compiling, profiling, driving PIE sessions, and everything else in the feature list below.
+- **Internal C++ MCP server** — an in-editor HTTP loopback server (port `18777` by default, configurable via `-AgentFrameworkPort=` or `AGENTFRAMEWORK_HTTP_PORT`, with automatic endpoint discovery) that runs Game-Thread operations in real time: reading and editing Blueprints, injecting T3D node graphs, compiling, profiling, driving PIE sessions, and everything else in the feature list below.
 - **External Python AST server** — parses your project's C++ with Clang and answers questions about hierarchies, signatures, and call graphs. Also hosts the vector indexes for Blueprint and documentation search. This is the layer that separates *understanding* a project from grepping it.
 - **MCP bridge proxy** — translates MCP JSON-RPC between the agent platform and both servers, with per-client tool profiles and schema caching.
 
@@ -88,18 +88,18 @@ The plugin exposes over 150 tools to the agent, and at this point the coverage r
 | **Game AI** | Create Blackboards, Behavior Trees (with node-graph injection), and StateTrees, set up Mass spawners, traits, and crowds, query Smart Objects, run EQS queries, and configure NavMesh |
 | **World building** | Create Landscapes and landscape grass types, define foliage types and paint them with a brush, configure World Partition, create Level Instances and Packed Level Actors, spawn actors, place lights, and edit World Settings |
 | **Geometry & physics** | Generate Dynamic Meshes through Geometry Scripting, set up Chaos physics and Dataflow destruction graphs, configure cloth simulation, build Chaos Vehicles, audit Nanite settings, and set up Runtime Virtual Textures and Sparse Volume Textures |
-| **Niagara VFX** | Create systems and emitters, insert and configure script modules and curves, compile, and capture temporal keyframe preview grids for visual QA |
+| **Niagara VFX** | Create systems, emitters, effect types, and data channels; insert and configure script modules, DI assignments, and multi-channel curves; compile; and capture temporal keyframe preview grids for visual QA |
 | **Procedural Content (PCG)** | Create graphs, wire nodes, attach components, set parameters, run local generation, and introspect graph structure |
 | **Materials** | Create Materials and Instances, add expression nodes, wire outputs to material properties, and render preview captures for visual verification |
 | **UMG / UI** | Build widget hierarchies from 30+ widget types, configure slots, anchors, and alignment, set fonts and brushes, bind events, instantiate full UIs from JSON, and capture the result |
 | **Gameplay Ability System** | Register Gameplay Tags, create Attribute Sets, configure ASCs, and author Gameplay Effects and Abilities |
 | **Enhanced Input** | Create Input Actions and Mapping Contexts, add key and button mappings, and wire up C++ or Blueprint bindings |
 | **Cinematics & rendering** | Create Level Sequences, add tracks and keyframes, set up cine camera rig rails, configure Movie Render Pipeline jobs, patch DMX fixtures, tune Lumen GI and reflections, and configure HLOD |
-| **Data** | Create Data Tables and Data Assets, import JSON, and set or introspect properties |
+| **Data** | Create Data Tables and Data Assets, import JSON, instantiate inline subobjects, and set or introspect properties across any UObject |
 | **Multiplayer** | Guided setup for replicated properties, RepNotify, Server/Client RPCs, and DOREPLIFETIME conditions |
 | **Performance** | Read memory and frame-timing stats, run stat commands, analyze asset sizes, drive the CSV profiler, get/set/discover CVars, and adjust scalability and renderer settings |
 | **Autonomous playtesting** | Start and stop PIE, simulate keyboard and gamepad input, extract the full UMG/Slate widget tree as JSON, click UI elements, and query world actors by class, tag, or radius |
-| **Import & assets** | Import FBX/OBJ as static or skeletal meshes, batch-import textures and audio, and configure Nanite, LODs, collision, and lightmaps |
+| **Import & assets** | Create arbitrary engine assets (PhysicalMaterial, CurveFloat, InputMappingContext, etc.), import FBX/OBJ as static or skeletal meshes, batch-import textures and audio, and configure Nanite, LODs, collision, and lightmaps |
 | **Generative assets** | Generate 3D models (Meshy) and voice/audio (ElevenLabs) from a prompt, then import them and wire up PBR materials automatically — via the `generate-assets` skill |
 | **Epic's AI Assistant** | Query the native UE 5.7/5.8 AI Assistant directly from your agent, so Epic's own documentation engine is one tool call away |
 | **Build & ship** | Build lighting (Preview through Production), package for Win64/Linux/Mac/Android/iOS, validate assets for cook errors, and run UE Automation Tests |

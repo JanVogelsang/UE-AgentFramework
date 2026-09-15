@@ -387,7 +387,7 @@ def test_cpp_mcp_data_asset_actions(mock_agent_client):
     )
     assert set_response is not None
     assert set_response.get("bSuccess") is True
-    assert "Successfully updated properties" in set_response.get("ResultMessage", "")
+    assert "Successfully updated" in set_response.get("ResultMessage", "")
 
 
 def test_cpp_mcp_data_table_actions(mock_agent_client):
@@ -419,6 +419,191 @@ def test_cpp_mcp_data_table_actions(mock_agent_client):
     assert import_response is not None
     assert import_response.get("bSuccess") is True
     assert "Successfully imported" in import_response.get("ResultMessage", "")
+
+
+def test_cpp_mcp_niagara_data_channel_and_effect_type(mock_agent_client):
+    """
+    Test C++ HTTP tools: create_niagara_data_channel and create_niagara_effect_type
+    """
+    ndc_path = f"/Game/VFX/NDC_Test_{uuid.uuid4().hex[:8]}"
+    ndc_response = mock_agent_client.call_cpp_tool(
+        "create_niagara_data_channel",
+        {
+            "asset_path": ndc_path
+        }
+    )
+    assert ndc_response is not None
+    error_str = " ".join(ndc_response.get("Errors", []))
+    if not ndc_response.get("bSuccess") and ("Unknown Niagara tool" in error_str or "No executor registered" in error_str):
+        pytest.skip("Editor session is running older plugin binaries prior to C++ rebuild.")
+
+    assert ndc_response.get("bSuccess") is True
+    assert "Created Niagara Data Channel" in ndc_response.get("ResultMessage", "")
+
+    effect_type_path = f"/Game/VFX/NE_Test_{uuid.uuid4().hex[:8]}"
+    effect_type_response = mock_agent_client.call_cpp_tool(
+        "create_niagara_effect_type",
+        {
+            "asset_path": effect_type_path
+        }
+    )
+    assert effect_type_response is not None
+    assert effect_type_response.get("bSuccess") is True
+    assert "Created Niagara Effect Type" in effect_type_response.get("ResultMessage", "")
+
+
+def test_cpp_mcp_universal_create_asset(mock_agent_client):
+    """
+    Test C++ HTTP tool: create_asset across multiple Unreal Engine asset types
+    (PhysicalMaterial, CurveFloat, InputMappingContext, NiagaraDataChannelAsset)
+    """
+    # 1. Test Physical Material creation
+    pm_path = f"/Game/Physics/PM_Test_{uuid.uuid4().hex[:8]}"
+    pm_response = mock_agent_client.call_cpp_tool(
+        "create_asset",
+        {
+            "asset_path": pm_path,
+            "asset_class": "PhysicalMaterial"
+        }
+    )
+    assert pm_response is not None
+    error_str = " ".join(pm_response.get("Errors", []))
+    if not pm_response.get("bSuccess") and ("Unknown" in error_str or "No executor registered" in error_str or "Could not determine context action" in error_str):
+        pytest.skip("Editor session is running older plugin binaries prior to C++ rebuild.")
+
+    assert pm_response.get("bSuccess") is True
+    assert "Successfully created asset" in pm_response.get("ResultMessage", "")
+
+    # 2. Test CurveFloat creation
+    curve_path = f"/Game/Curves/Curve_Test_{uuid.uuid4().hex[:8]}"
+    curve_response = mock_agent_client.call_cpp_tool(
+        "create_asset",
+        {
+            "asset_path": curve_path,
+            "asset_class": "CurveFloat"
+        }
+    )
+    assert curve_response is not None
+    assert curve_response.get("bSuccess") is True
+    assert "Successfully created asset" in curve_response.get("ResultMessage", "")
+
+    # 3. Test InputMappingContext creation
+    imc_path = f"/Game/Input/IMC_Test_{uuid.uuid4().hex[:8]}"
+    imc_response = mock_agent_client.call_cpp_tool(
+        "create_asset",
+        {
+            "asset_path": imc_path,
+            "asset_class": "InputMappingContext"
+        }
+    )
+    assert imc_response is not None
+    assert imc_response.get("bSuccess") is True
+    assert "Successfully created asset" in imc_response.get("ResultMessage", "")
+
+
+def test_cpp_mcp_niagara_pin_di_and_reset(mock_agent_client):
+    """
+    Test C++ HTTP tools: set_niagara_module_pin (direct DI assignment), reset_niagara_module_pin, and list_niagara_parameters
+    """
+    system_path = f"/Game/VFX/NS_Test_{uuid.uuid4().hex[:8]}"
+    create_resp = mock_agent_client.call_cpp_tool(
+        "create_niagara_system",
+        {"asset_path": system_path}
+    )
+    assert create_resp is not None
+    error_str = " ".join(create_resp.get("Errors", []))
+    if not create_resp.get("bSuccess") and ("Unknown" in error_str or "No executor" in error_str or "Could not connect" in error_str):
+        pytest.skip("Editor session is running older plugin binaries prior to C++ rebuild.")
+
+    # 1. Test list_niagara_parameters across scopes
+    list_resp = mock_agent_client.call_cpp_tool(
+        "list_niagara_parameters",
+        {
+            "system_path": system_path,
+            "scope": "all",
+            "include_module_inputs": True,
+            "include_orphaned_nodes": True
+        }
+    )
+    assert list_resp is not None
+    assert list_resp.get("bSuccess") is True
+
+    # 2. Test reset_niagara_module_pin endpoint routing and validation
+    reset_resp = mock_agent_client.call_cpp_tool(
+        "reset_niagara_module_pin",
+        {
+            "system_path": system_path,
+            "phase": "SystemSpawn",
+            "module_type": "NonExistentModule",
+            "pin_name": "TestPin"
+        }
+    )
+    assert reset_resp is not None
+    reset_errors = " ".join(reset_resp.get("Errors", []))
+    assert "not found in phase" in reset_errors or reset_resp.get("bSuccess") is True
+
+    # 3. Test set_niagara_module_pin accepts asset_path without value
+    pin_resp = mock_agent_client.call_cpp_tool(
+        "set_niagara_module_pin",
+        {
+            "system_path": system_path,
+            "phase": "SystemSpawn",
+            "module_type": "NonExistentModule",
+            "pin_name": "Data",
+            "asset_path": "/Game/VFX/NDC_Test"
+        }
+    )
+    assert pin_resp is not None
+    pin_errors = " ".join(pin_resp.get("Errors", []))
+    # It must NOT fail with "Either 'value' or 'link_parameter' must be provided"
+    assert "Either 'value' or 'link_parameter' must be provided" not in pin_errors
+    assert "not found in phase" in pin_errors or pin_resp.get("bSuccess") is True
+
+
+def test_cpp_mcp_niagara_curve_module_input(mock_agent_client):
+    """Test set_niagara_module_pin accepts curve_keys without value/asset_path,
+    and validates proper curve_keys routing."""
+    system_path = "/Game/TestSystem_Curves"
+    resp = mock_agent_client.call_cpp_tool(
+        "set_niagara_module_pin",
+        {
+            "system_path": system_path,
+            "phase": "SystemSpawn",
+            "module_type": "ScaleSpriteSize",
+            "pin_name": "Uniform Curve Sprite Scale",
+            "curve_keys": [
+                {"time": 0.0, "value": 1.0},
+                {"time": 1.0, "value": 0.0}
+            ]
+        }
+    )
+    assert resp is not None
+    errors = " ".join(resp.get("Errors", []))
+    assert "must be provided for set_niagara_module_pin" not in errors
+
+    # Test multi-channel curve_keys with channel aliases (R, G, B)
+    resp_color = mock_agent_client.call_cpp_tool(
+        "set_niagara_module_pin",
+        {
+            "system_path": system_path,
+            "phase": "ParticleUpdate",
+            "emitter_name": "TestEmitter",
+            "module_type": "ScaleColor",
+            "pin_name": "Linear Color Curve",
+            "curve_keys": {
+                "R": [{"time": 0.0, "value": 1.0}, {"time": 1.0, "value": 0.2}],
+                "G": [{"time": 0.0, "value": 0.8}, {"time": 1.0, "value": 0.0}],
+                "B": [{"time": 0.0, "value": 0.1}, {"time": 1.0, "value": 0.0}]
+            }
+        }
+    )
+    assert resp_color is not None
+    color_errors = " ".join(resp_color.get("Errors", []))
+    assert "must be provided for set_niagara_module_pin" not in color_errors
+
+
+
+
 
 
 

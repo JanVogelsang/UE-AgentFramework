@@ -66,7 +66,18 @@ Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ Comma
 `
 <!-- LOCAL_ENV_END -->
 
-## 3. Skills Directory
+## 3. Coding Guardrails & Engine Invariants
+
+### Strict Pointer & Lifecycle Safety
+- **Data Asset Pointer Validation**: Always verify `IsValid()` or check against `nullptr` before dereferencing Data Asset pointers (e.g., `GunDataAsset->VisualizationAsset`, `Sprite->GetFName()`). Unassigned or broken references in `.uasset` files will hard-crash the editor, particularly in Mass ECS and Niagara subsystems.
+- **Avoid Pointer Chaining (Early Init)**: Never chain pointer calls (e.g. `GetMatchInstance()->GetMapGridSize()`) without validating intermediate pointers. Subsystems or game states may be uninitialized during early lifecycle or standalone UI testing. Always provide fallback defaults when pointers are null.
+- **UI Dynamic Hover & Synthetic Events**: Handlers receiving data asset pointers from UI events (e.g., `OnUpgradeSlotHovered`, `AreUnitAttributesMatchingUpgradeRequirements`) MUST verify the pointer before accessing properties. Slate synthetic mouse-move events frequently pass `nullptr` for unpopulated slots.
+
+### Config & INI Serialization Rules
+- **TMap Property Delimiters**: Unreal's `FMapProperty::ImportText_Internal` fails to parse multi-line `+MapKey=` entries. Multi-entry TMaps in `DefaultGame.ini` must be formatted on a single line using parentheses pairs:
+  `MapProperty=((Key1,Val1),(Key2,Val2))`
+
+## 4. Skills Directory
 Read the corresponding file with your harness's native file-reading tool (`view_file` in Antigravity, `Read` in Claude Code, or equivalent) when performing these tasks:
 - [blueprint-authoring](../blueprint-authoring/SKILL.md): Modifying `.uasset` blueprints (nodes, variables, formatting).
 - [setup-replication](../setup-replication/SKILL.md): Network replication, RPCs, and RepNotify.
@@ -77,6 +88,7 @@ Read the corresponding file with your harness's native file-reading tool (`view_
 - [create-actor](../create-actor/SKILL.md): Boilerplate for new Actor/Pawn C++ classes.
 - [create-interface](../create-interface/SKILL.md): Blueprint and C++ interface creation.
 - [pie-verifier](../pie-verifier/SKILL.md): Play-In-Editor (PIE) state and viewport checks.
+
 
 
 

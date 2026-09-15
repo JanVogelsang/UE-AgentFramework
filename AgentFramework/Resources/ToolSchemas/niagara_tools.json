@@ -18,6 +18,34 @@
       }
     },
     {
+      "name": "create_niagara_data_channel",
+      "description": "Create a new Niagara Data Channel asset at the specified content path for high-frequency decoupled event broadcasting.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "asset_path": {
+            "type": "string",
+            "description": "Full destination content path, e.g. /Game/VFX/NDC_Impacts"
+          }
+        },
+        "required": ["asset_path"]
+      }
+    },
+    {
+      "name": "create_niagara_effect_type",
+      "description": "Create a new Niagara Effect Type asset at the specified content path for system scalability, distance culling, and LOD budgeting.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "asset_path": {
+            "type": "string",
+            "description": "Full destination content path, e.g. /Game/VFX/NE_ExplosionScalability"
+          }
+        },
+        "required": ["asset_path"]
+      }
+    },
+    {
       "name": "add_niagara_emitter",
       "description": "Create or copy an emitter and append it to an existing Niagara System.",
       "input_schema": {
@@ -29,12 +57,15 @@
           },
           "emitter_template": {
             "type": "string",
-            "enum": ["SpriteBurst", "RibbonTrail", "MeshDebris", "GPUSimulation"],
-            "description": "The standard AAA template emitter configuration to copy."
+            "description": "The template emitter or asset to copy (e.g. 'SpriteBurst', 'RibbonTrail', 'MeshDebris', 'GPUSimulation', or an asset path to an existing Niagara System or Niagara Emitter)."
           },
           "emitter_name": {
             "type": "string",
             "description": "Desired unique name for the new emitter handle inside the system."
+          },
+          "source_emitter_name": {
+            "type": "string",
+            "description": "Optional: Name of the specific emitter to extract when copying from a multi-emitter Niagara System."
           }
         },
         "required": ["system_path", "emitter_template", "emitter_name"]
@@ -42,7 +73,7 @@
     },
     {
       "name": "add_niagara_module",
-      "description": "Dynamically add a logic module (e.g. AddVelocity, GravityForce, Collision, LightRenderer) to a specific phase of an emitter script graph.",
+      "description": "Dynamically add a logic module (e.g. AddVelocity, GravityForce, Drag, Collision, AccelerationForce, LightRenderer) to a specific phase of an emitter or system stack graph.",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -52,25 +83,32 @@
           },
           "emitter_name": {
             "type": "string",
-            "description": "Name of the emitter inside the system to modify"
+            "description": "Name of the emitter inside the system to modify. Required for emitter phases, omitted for system phases."
           },
           "phase": {
             "type": "string",
-            "enum": ["EmitterSpawn", "EmitterUpdate", "ParticleSpawn", "ParticleUpdate"],
+            "enum": ["EmitterSpawn", "EmitterUpdate", "ParticleSpawn", "ParticleUpdate", "ParticleEvent", "SystemSpawn", "SystemUpdate"],
             "description": "The script execution phase/stack layer where the module will be added."
           },
           "module_type": {
             "type": "string",
-            "enum": ["AddVelocity", "GravityForce", "Drag", "Collision", "LightRenderer", "AccelerationForce"],
-            "description": "The standard Niagara module to add to the script stack."
+            "description": "The Niagara module to add to the script stack (e.g. stock name like 'AddVelocity', 'GravityForce', 'Drag', 'Collision', 'AccelerationForce', or an arbitrary Niagara module script asset path)."
+          },
+          "suggested_name": {
+            "type": "string",
+            "description": "Optional human-readable label or alias for the newly added module node in the stack."
+          },
+          "target_index": {
+            "type": "integer",
+            "description": "Optional 0-based insertion index within the phase stack. If omitted or -1, appends to the end of the stack."
           }
         },
-        "required": ["system_path", "emitter_name", "phase", "module_type"]
+        "required": ["system_path", "phase", "module_type"]
       }
     },
     {
       "name": "set_niagara_module_pin",
-      "description": "Configure an input pin value or curve binding on a specific module inside an emitter.",
+      "description": "Configure an input pin value or link a parameter on a specific module inside an emitter or system phase.",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -80,16 +118,24 @@
           },
           "emitter_name": {
             "type": "string",
-            "description": "Name of the emitter inside the system"
+            "description": "Name of the emitter inside the system. Required for emitter phases, omitted for system phases."
           },
           "phase": {
             "type": "string",
-            "enum": ["EmitterSpawn", "EmitterUpdate", "ParticleSpawn", "ParticleUpdate"],
+            "enum": ["EmitterSpawn", "EmitterUpdate", "ParticleSpawn", "ParticleUpdate", "ParticleEvent", "SystemSpawn", "SystemUpdate"],
             "description": "The execution phase containing the module"
           },
           "module_type": {
             "type": "string",
             "description": "The type of the module containing the pin, e.g. AddVelocity"
+          },
+          "module_index": {
+            "type": "integer",
+            "description": "Optional 0-based index when multiple modules of the same type exist in the phase stack."
+          },
+          "node_guid": {
+            "type": "string",
+            "description": "Optional node GUID string to uniquely target a specific module node."
           },
           "pin_name": {
             "type": "string",
@@ -97,10 +143,70 @@
           },
           "value": {
             "type": "string",
-            "description": "The value or expression to assign to the pin. For standard types: '1.5' (float), 'X=0.0 Y=0.0 Z=-980.0' (Vector), '(R=1.0,G=0.0,B=0.0)' (Color). For curve mapping: '[ (0.0, 1.0), (0.5, 2.0), (1.0, 0.0) ]' representing time/value keys."
+            "description": "Literal constant to assign to the pin: e.g. '1.5' (float), '(X=0.0,Y=0.0,Z=-980.0)' (Vector), '(R=1.0,G=0.0,B=0.0,A=1.0)' (Color). Either 'value', 'link_parameter', 'asset_path', 'properties', or 'curve_keys' must be provided."
+          },
+          "link_parameter": {
+            "type": "string",
+            "description": "Parameter handle name to bind to this pin (e.g. 'User.MyColor', 'Particles.Age'). When provided, links the input to this parameter instead of using literal value. Either 'value', 'link_parameter', 'asset_path', 'properties', or 'curve_keys' must be provided."
+          },
+          "asset_path": {
+            "type": "string",
+            "description": "Asset content path to assign directly to a Data Interface or UObject module input pin (e.g. '/Game/VFX/NDC_Impacts' or a StaticMesh/Texture path)."
+          },
+          "asset_property_name": {
+            "type": "string",
+            "description": "Optional property name on the data interface to assign the asset to (e.g. 'DataChannelAsset', 'DefaultMesh', 'Channel', 'Source'). If omitted, automatically matches to the first compatible property."
+          },
+          "interface_class": {
+            "type": "string",
+            "description": "Optional Data Interface class name (e.g. 'NiagaraDataInterfaceDataChannelRead', 'NiagaraDataInterfaceStaticMesh', 'NiagaraDataInterfaceCurve') when configuring a Data Interface pin directly."
+          },
+          "properties": {
+            "type": "object",
+            "description": "Optional map of property names and values to assign to the direct Data Interface instance."
+          },
+          "curve_keys": {
+            "type": ["array", "object"],
+            "description": "For curve data interfaces (NiagaraDataInterfaceCurve, NiagaraDataInterfaceColorCurve, etc.): an array of {time, value} objects for single-channel curves, or an object mapping channel names (e.g. 'Red', 'Green', 'Blue', 'Alpha') to arrays of {time, value} objects for multi-channel curves."
           }
         },
-        "required": ["system_path", "emitter_name", "phase", "module_type", "pin_name", "value"]
+        "required": ["system_path", "phase", "module_type", "pin_name"]
+      }
+    },
+    {
+      "name": "reset_niagara_module_pin",
+      "description": "Reset a Niagara module input pin back to its autogenerated default, removing any override pin, disconnecting and deleting exclusive upstream input nodes, and pruning orphaned graph nodes.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "system_path": {
+            "type": "string",
+            "description": "Content path of the target Niagara System"
+          },
+          "emitter_name": {
+            "type": "string",
+            "description": "Name of the emitter inside the system. Required for emitter phases, omitted for system phases."
+          },
+          "phase": {
+            "type": "string",
+            "enum": ["EmitterSpawn", "EmitterUpdate", "ParticleSpawn", "ParticleUpdate", "ParticleEvent", "SystemSpawn", "SystemUpdate"],
+            "description": "The execution phase containing the module"
+          },
+          "module_type": {
+            "type": "string",
+            "description": "The type of the module containing the pin, e.g. 'AddVelocity' or 'Drag'"
+          },
+          "pin_name": {
+            "type": "string",
+            "description": "Name of the input pin to reset"
+          },
+          "clean_orphaned_nodes": {
+            "type": "boolean",
+            "default": true,
+            "description": "Whether to clean up orphaned input nodes in the phase graph after resetting the pin. Default: true."
+          }
+        },
+        "required": ["system_path", "phase", "module_type", "pin_name"]
       }
     },
     {
@@ -141,7 +247,7 @@
     },
     {
       "name": "set_niagara_parameter",
-      "description": "Set a System, Emitter, or User parameter value or dynamic curve on a UNiagaraSystem asset. Supports both PascalCase and snake_case parameter aliases.",
+      "description": "Set a User parameter value or dynamic curve on a UNiagaraSystem asset. Note: System and Emitter scopes are graph-internal and cannot be added to the asset parameter store directly; configure module pins via set_niagara_module_pin or link them to a User parameter.",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -155,15 +261,15 @@
           },
           "parameter_scope": {
             "type": "string",
-            "enum": ["User", "System", "Emitter"],
+            "enum": ["User"],
             "default": "User",
-            "description": "Parameter store scope ('User', 'System', or 'Emitter'). Default: 'User'. Alias for ParameterScope."
+            "description": "Parameter store scope ('User'). System and Emitter scopes are rejected as they are graph-internal. Alias for ParameterScope."
           },
           "ParameterScope": {
             "type": "string",
-            "enum": ["User", "System", "Emitter"],
+            "enum": ["User"],
             "default": "User",
-            "description": "Parameter store scope ('User', 'System', or 'Emitter'). Default: 'User'. Alias for parameter_scope."
+            "description": "Parameter store scope ('User'). System and Emitter scopes are rejected as they are graph-internal. Alias for parameter_scope."
           },
           "parameter_name": {
             "type": "string",
@@ -183,7 +289,12 @@
               "Bool",
               "Int32",
               "CurveFloat",
-              "CurveLinearColor"
+              "CurveLinearColor",
+              "Object",
+              "UObject",
+              "DataChannelAsset",
+              "DataChannel",
+              "DataInterface"
             ],
             "default": "Float",
             "description": "Niagara parameter data type. Default: 'Float'. Alias for DataType."
@@ -198,10 +309,19 @@
               "Bool",
               "Int32",
               "CurveFloat",
-              "CurveLinearColor"
+              "CurveLinearColor",
+              "Object",
+              "UObject",
+              "DataChannelAsset",
+              "DataChannel",
+              "DataInterface"
             ],
             "default": "Float",
             "description": "Niagara parameter data type. Default: 'Float'. Alias for data_type."
+          },
+          "asset_path": {
+            "type": "string",
+            "description": "Asset content path for Object, DataChannelAsset, or DataInterface parameter binding (e.g. '/Game/VFX/NDC_Impacts')."
           },
           "value": {
             "description": "Constant scalar, vector, color, bool, or int value payload (e.g. '500.0', '1.0, 0.0, 0.0', true). Alias for Value."
@@ -264,6 +384,126 @@
           { "required": ["system_path", "parameter_name"] },
           { "required": ["SystemAsset", "ParameterName"] }
         ]
+      }
+    },
+    {
+      "name": "set_niagara_data_interface",
+      "description": "Create and bind a Niagara Data Interface (e.g. Data Channel, Static Mesh, Audio, Curve) to a Niagara System parameter in User scope. Note: Non-User scopes like 'Emitter.' or 'System.' are rejected as data interfaces must be exposed as User parameters.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "system_path": {
+            "type": "string",
+            "description": "Content path of the target Niagara System"
+          },
+          "parameter_name": {
+            "type": "string",
+            "description": "Name of the parameter to bind (e.g. 'DataChannel', 'User.DataChannel', 'MeshDI')"
+          },
+          "interface_class": {
+            "type": "string",
+            "description": "Data Interface class name (e.g. 'NiagaraDataInterfaceDataChannelRead', 'NiagaraDataInterfaceDataChannelWrite', 'NiagaraDataInterfaceStaticMesh'). Alias: data_interface_class."
+          },
+          "data_interface_class": {
+            "type": "string",
+            "description": "Alias for interface_class."
+          },
+          "asset_path": {
+            "type": "string",
+            "description": "Optional asset content path to assign to the data interface (e.g. a UNiagaraDataChannelAsset or StaticMesh path)."
+          },
+          "asset_property_name": {
+            "type": "string",
+            "description": "Optional property name on the data interface to assign the asset to (e.g. 'DataChannelAsset', 'DefaultMesh', 'Channel', 'Source'). If omitted, automatically matches to the first compatible property."
+          },
+          "properties": {
+            "type": "object",
+            "description": "Optional map of property names and values to assign to the data interface instance."
+          }
+        },
+        "required": ["system_path", "parameter_name"]
+      }
+    },
+    {
+      "name": "add_niagara_renderer",
+      "description": "Add a renderer (e.g. Light, Sprite, Ribbon, Mesh, Decal, Component) to an emitter within a Niagara System.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "system_path": {
+            "type": "string",
+            "description": "Content path of the target Niagara System"
+          },
+          "emitter_name": {
+            "type": "string",
+            "description": "Name of the emitter inside the system to add the renderer to"
+          },
+          "renderer_type": {
+            "type": "string",
+            "description": "Type or class of renderer to add to the emitter (e.g. 'Light', 'Sprite', 'Ribbon', 'Mesh', 'Decal', 'Component', or full class name like 'NiagaraDecalRendererProperties')."
+          },
+          "target_index": {
+            "type": "integer",
+            "description": "Optional 0-based insertion index in the emitter's renderers list."
+          },
+          "properties": {
+            "type": "object",
+            "description": "Optional map of property names and values to configure on the new renderer instance."
+          }
+        },
+        "required": ["system_path", "emitter_name", "renderer_type"]
+      }
+    },
+    {
+      "name": "list_niagara_parameters",
+      "description": "List all parameters, module input overrides, curve keys, and bound data interfaces across Niagara parameter scopes (User, System, Emitter, ModuleInput, GraphInput, or All).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "system_path": {
+            "type": "string",
+            "description": "Content path of the target UNiagaraSystem asset, e.g. /Game/Effects/NS_Explosion"
+          },
+          "scope": {
+            "type": "string",
+            "enum": ["all", "User", "System", "Emitter", "ModuleInput", "GraphInput"],
+            "default": "all",
+            "description": "Filter parameter inspection to a specific scope ('all', 'User', 'System', 'Emitter', 'ModuleInput', 'GraphInput'). Default: 'all'."
+          },
+          "emitter_name": {
+            "type": "string",
+            "description": "Optional emitter name to filter Emitter or ModuleInput scope parameters."
+          },
+          "include_module_inputs": {
+            "type": "boolean",
+            "default": true,
+            "description": "Whether to include module input overrides when inspecting System, Emitter, or All scopes. Default: true."
+          },
+          "include_orphaned_nodes": {
+            "type": "boolean",
+            "default": true,
+            "description": "Whether to detect and include orphaned graph input nodes. Default: true."
+          }
+        },
+        "required": ["system_path"]
+      }
+    },
+    {
+      "name": "remove_niagara_parameter",
+      "description": "Remove a parameter from a UNiagaraSystem parameter store by name.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "system_path": {
+            "type": "string",
+            "description": "Content path of the target UNiagaraSystem asset, e.g. /Game/Effects/NS_Explosion"
+          },
+          "parameter_name": {
+            "type": "string",
+            "description": "Name of the parameter to remove, e.g. 'MyParam' or 'User.MyParam'"
+          }
+        },
+        "required": ["system_path", "parameter_name"]
       }
     }
   ]

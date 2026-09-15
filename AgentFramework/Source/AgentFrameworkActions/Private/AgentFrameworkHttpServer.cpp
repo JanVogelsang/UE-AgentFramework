@@ -5,10 +5,14 @@
 #include "HttpPath.h"
 #include "IHttpRouter.h"
 #include "HttpServerResponse.h"
+#include "Dom/JsonObject.h"
+#include "HAL/PlatformProcess.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonWriter.h"
+#include "Misc/CommandLine.h"
 #include "Misc/FileHelper.h"
+#include "Misc/Parse.h"
 #include "Misc/Paths.h"
 #include "Interfaces/IPluginManager.h"
 #include "Async/Async.h"
@@ -55,22 +59,136 @@
 TSharedPtr<FAgentFrameworkActionRouter> FAgentFrameworkHttpServer::ActionRouter = nullptr;
 uint32 FAgentFrameworkHttpServer::Port = 18777;
 
+bool FAgentFrameworkHttpServer::IsValidPort(const uint32 InPort)
+{
+	// Below 1024 is the well-known range and needs privileges on most systems; above 65535 is not
+	// a port at all. Either way, binding would fail in a way that is harder to read than this.
+	return InPort >= 1024 && InPort <= 65535;
+}
+
+uint32 FAgentFrameworkHttpServer::ResolvePort()
+{
+	// The command line wins, so a launcher can put several editors on distinct ports without
+	// touching the environment they share.
+	uint32 CommandLinePort = 0;
+	if (FParse::Value(FCommandLine::Get(), TEXT("AgentFrameworkPort="), CommandLinePort))
+	{
+		if (IsValidPort(CommandLinePort))
+		{
+			return CommandLinePort;
+		}
+
+		UE_LOG(LogAgentFramework, Warning, TEXT("AgentFramework: -AgentFrameworkPort=%u is outside the usable range (1024-65535); ignoring it."), CommandLinePort);
+	}
+
+	const FString EnvPort = FPlatformMisc::GetEnvironmentVariable(TEXT("AGENTFRAMEWORK_HTTP_PORT"));
+	if (!EnvPort.IsEmpty())
+	{
+		const uint32 EnvPortValue = static_cast<uint32>(FCString::Atoi(*EnvPort));
+		if (IsValidPort(EnvPortValue))
+		{
+			return EnvPortValue;
+		}
+
+		UE_LOG(LogAgentFramework, Warning, TEXT("AgentFramework: AGENTFRAMEWORK_HTTP_PORT='%s' is not a usable port; falling back to %u."), *EnvPort, DefaultPort);
+	}
+
+	return DefaultPort;
+}
+
+FString FAgentFrameworkHttpServer::GetEndpointFilePath()
+{
+	return FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("AgentFramework") / TEXT("endpoint.json"));
+}
+
+void FAgentFrameworkHttpServer::WriteEndpointFile()
+{
+	const TSharedRef<FJsonObject> Endpoint = MakeShared<FJsonObject>();
+	Endpoint->SetNumberField(TEXT("port"), Port);
+	Endpoint->SetNumberField(TEXT("pid"), static_cast<double>(FPlatformProcess::GetCurrentProcessId()));
+	Endpoint->SetStringField(TEXT("project"), FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath()));
+	Endpoint->SetStringField(TEXT("started_utc"), FDateTime::UtcNow().ToIso8601());
+
+	FString Json;
+	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Json);
+	if (!FJsonSerializer::Serialize(Endpoint, Writer))
+	{
+		UE_LOG(LogAgentFramework, Warning, TEXT("AgentFramework: could not serialise the endpoint file; clients fall back to port %u."), DefaultPort);
+		return;
+	}
+
+	const FString Path = GetEndpointFilePath();
+	FPlatformFileManager::Get().GetPlatformFile().CreateDirectoryTree(*FPaths::GetPath(Path));
+
+	if (!FFileHelper::SaveStringToFile(Json, *Path))
+	{
+		// Not fatal - the server is serving either way, and a client can still be pointed at it
+		// by hand with BRIDGE_HTTP_PORT.
+		UE_LOG(LogAgentFramework, Warning, TEXT("AgentFramework: could not write '%s'; clients fall back to port %u."), *Path, DefaultPort);
+		return;
+	}
+
+	UE_LOG(LogAgentFramework, Display, TEXT("AgentFramework: published endpoint for port %u to '%s'."), Port, *Path);
+}
+
+void FAgentFrameworkHttpServer::RemoveEndpointFile()
+{
+	// A stale file advertises a port nobody serves. Clients are expected to confirm the port is
+	// open before trusting it, but a crash is the only case that should ever leave one behind.
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	const FString Path = GetEndpointFilePath();
+	if (PlatformFile.FileExists(*Path))
+	{
+		PlatformFile.DeleteFile(*Path);
+	}
+}
+
 void FAgentFrameworkHttpServer::Start()
 {
+	Port = ResolvePort();
+
 	ActionRouter = MakeShared<FAgentFrameworkActionRouter>();
 	RegisterAllExecutors(ActionRouter.ToSharedRef());
 
-	TSharedPtr<IHttpRouter> Router = FHttpServerModule::Get().GetHttpRouter(Port);
-	if (Router.IsValid())
+	FHttpServerModule& HttpServerModule = FHttpServerModule::Get();
+
+	// Listeners must be enabled *before* GetHttpRouter, and this ordering is load-bearing.
+	// FHttpServerModule::GetHttpRouter only attempts the bind inside `if (bHttpListenersEnabled)`,
+	// which StartAllListeners is what sets. Call GetHttpRouter first - as this code used to - and
+	// no bind is attempted, bFailOnBindFailure cannot fire, a valid router comes back for a port
+	// another process owns, and the later StartAllListeners logs the real failure only as a
+	// LogHttpServerModule warning. The editor then reports success while serving nothing.
+	HttpServerModule.StartAllListeners();
+
+	// bFailOnBindFailure defaults to false, which is the "legacy behavior returns the router
+	// regardless of listener success" path in the engine. We want the failure.
+	TSharedPtr<IHttpRouter> Router = HttpServerModule.GetHttpRouter(Port, /*bFailOnBindFailure*/ true);
+	if (!Router.IsValid())
 	{
-		Router->BindRoute(FHttpPath(TEXT("/api/tools")), EHttpServerRequestVerbs::VERB_GET, FHttpRequestHandler::CreateStatic(&FAgentFrameworkHttpServer::HandleListToolsRequest));
-		Router->BindRoute(FHttpPath(TEXT("/api/execute_tool")), EHttpServerRequestVerbs::VERB_POST, FHttpRequestHandler::CreateStatic(&FAgentFrameworkHttpServer::HandleExecuteToolRequest));
-		FHttpServerModule::Get().StartAllListeners();
+		// Without this error the condition is indistinguishable from a hang on the agent side:
+		// the bridge waits forever on a port nobody is listening to. The overwhelmingly likely
+		// cause is a second editor already holding this port.
+		UE_LOG(
+			LogAgentFramework, Error,
+			TEXT("AgentFramework: failed to bind the HTTP router on port %u. Another editor is probably already listening there. Pass -AgentFrameworkPort=<port> to use a different one."), Port);
+		return;
 	}
+
+	// Routes are resolved per request, so binding them just after the listener came up is safe.
+	Router->BindRoute(FHttpPath(TEXT("/api/tools")), EHttpServerRequestVerbs::VERB_GET, FHttpRequestHandler::CreateStatic(&FAgentFrameworkHttpServer::HandleListToolsRequest));
+	Router->BindRoute(FHttpPath(TEXT("/api/execute_tool")), EHttpServerRequestVerbs::VERB_POST, FHttpRequestHandler::CreateStatic(&FAgentFrameworkHttpServer::HandleExecuteToolRequest));
+
+	UE_LOG(LogAgentFramework, Display, TEXT("AgentFramework: HTTP server listening on port %u."), Port);
+
+	// Only now, with the listener actually bound and the routes attached, is the port worth
+	// advertising. Publishing earlier would point clients at a server that may still fail.
+	WriteEndpointFile();
 }
 
 void FAgentFrameworkHttpServer::Stop()
 {
+	RemoveEndpointFile();
+
 	if (ActionRouter.IsValid())
 	{
 		if (FModuleManager::Get().IsModuleLoaded("HTTPServer"))
@@ -168,7 +286,8 @@ bool FAgentFrameworkHttpServer::HandleListToolsRequest(const FHttpServerRequest&
 		TEXT("input_tools.json"),
 		TEXT("enhanced_input_tools.json"),
 		TEXT("pie_tools.json"),
-		TEXT("niagara_tools.json")
+		TEXT("niagara_tools.json"),
+		TEXT("dataasset_tools.json")
 	};
 
 	TArray<FString> Files;

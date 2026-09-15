@@ -195,7 +195,7 @@ Because `bridge/main.py` is imported once per MCP server process, changes to it 
 ## Interface Contracts
 
 ### Client / Bridge ↔ Internal C++ Server
-- **Protocol**: JSON-RPC over stdio (Bridge) mapped to HTTP POST `/api/execute_tool` (Editor port 18777).
+- **Protocol**: JSON-RPC over stdio (Bridge) mapped to HTTP POST `/api/execute_tool` (Editor port 18777 by default, configurable via `-AgentFrameworkPort=` / `AGENTFRAMEWORK_HTTP_PORT`, or auto-discovered via Saved endpoint file).
 - **Standard Payload**:
   - Request: `{"name": "<tool_name>", "arguments": { ... }}`
   - Response: `{"bSuccess": true, "ResultMessage": "...", "Errors": [], "Warnings": []}`
