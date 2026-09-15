@@ -22,6 +22,9 @@
 #include "NiagaraGraph.h"
 #include "NiagaraNodeFunctionCall.h"
 #include "NiagaraNodeOutput.h"
+#include "EdGraph/EdGraphNode.h"
+#include "NiagaraEditorUtilities.h"
+#include "NiagaraExternalSystemEditorUtilities.h"
 #include "ViewModels/Stack/NiagaraStackGraphUtilities.h"
 #include "ViewModels/Stack/NiagaraParameterHandle.h"
 #include "NiagaraSystemEditorData.h"
@@ -142,6 +145,95 @@ namespace
 			}
 		}
 		return ModifiedCount;
+	}
+
+	// Every emitter handle must be represented by a UNiagaraNodeEmitter in both system script graphs; that node
+	// is what pulls the emitter's EmitterSpawn / EmitterUpdate graphs (spawn rate, burst, state) into the compiled
+	// system scripts. A handle without one compiles clean, shows every module in the stack, and never spawns a
+	// particle. Returns how many handles are missing their node in either graph.
+	int32 CountEmitterHandlesWithoutSystemNodes(UNiagaraSystem& System)
+	{
+#if WITH_EDITOR
+		auto CountEmitterNodes = [](UNiagaraScript* Script) -> int32
+		{
+			UNiagaraScriptSource* Source = Script ? Cast<UNiagaraScriptSource>(Script->GetLatestSource()) : nullptr;
+			if (!Source || !Source->NodeGraph)
+			{
+				return 0;
+			}
+			// UNiagaraNodeEmitter lives in a private NiagaraEditor header, so match it by class name.
+			static const FName EmitterNodeClassName(TEXT("NiagaraNodeEmitter"));
+			int32 NumEmitterNodes = 0;
+			for (const UEdGraphNode* Node : Source->NodeGraph->Nodes)
+			{
+				if (Node && Node->GetClass()->GetFName() == EmitterNodeClassName)
+				{
+					++NumEmitterNodes;
+				}
+			}
+			return NumEmitterNodes;
+		};
+		const int32 NumHandles = System.GetEmitterHandles().Num();
+		const int32 MissingInSpawn = NumHandles - CountEmitterNodes(System.GetSystemSpawnScript());
+		const int32 MissingInUpdate = NumHandles - CountEmitterNodes(System.GetSystemUpdateScript());
+		return FMath::Max(0, FMath::Max(MissingInSpawn, MissingInUpdate));
+#else
+		return 0;
+#endif
+	}
+
+	// Rebuild the system scripts' emitter nodes for every handle. FNiagaraStackGraphUtilities::RebuildEmitterNodes
+	// is what the engine uses but it is not exported, so this goes through two exported entry points that each call
+	// it: FNiagaraEditorUtilities::AddEmitterToSystem (adds a throwaway emitter, rebuilds the nodes of every handle)
+	// and UNiagaraExternalEditUtilities::RemoveEmitter (removes it again, rebuilds once more). The system ends with
+	// the same handles it started with.
+	bool RebuildSystemEmitterNodes(UNiagaraSystem& System, FString& OutError)
+	{
+#if WITH_EDITOR
+		UNiagaraEmitter* ThrowawayTemplate = LoadObject<UNiagaraEmitter>(nullptr, TEXT("/Niagara/DefaultAssets/Templates/Emitters/SimpleSpriteBurst.SimpleSpriteBurst"));
+		if (!IsValid(ThrowawayTemplate))
+		{
+			OutError = TEXT("Could not load the engine template emitter needed to rebuild the system's emitter nodes.");
+			return false;
+		}
+
+		const int32 NumHandlesBefore = System.GetEmitterHandles().Num();
+		const FGuid ThrowawayId = FNiagaraEditorUtilities::AddEmitterToSystem(System, *ThrowawayTemplate, ThrowawayTemplate->GetExposedVersion().VersionGuid);
+		const FNiagaraEmitterHandle* ThrowawayHandle = System.GetEmitterHandles().FindByPredicate(
+			[&ThrowawayId](const FNiagaraEmitterHandle& Handle) { return Handle.GetId() == ThrowawayId; });
+		if (!ThrowawayHandle)
+		{
+			OutError = TEXT("Adding the throwaway emitter used to rebuild the system's emitter nodes did not produce a handle.");
+			return false;
+		}
+		const FName ThrowawayName = ThrowawayHandle->GetName();
+		UNiagaraEmitter* ThrowawayEmitter = ThrowawayHandle->GetInstance().Emitter;
+
+		FNiagaraExternalEditContext Context(&System);
+		const FNiagaraExt_StackItemReference ThrowawayRef(&System, ThrowawayName);
+		UNiagaraExternalEditUtilities::RemoveEmitter(ThrowawayRef, Context);
+		if (!Context.HasErrors() && IsValid(ThrowawayEmitter) && ThrowawayEmitter->GetOuter() == &System)
+		{
+			// Removing the handle leaves the emitter object outered to the system, and the next save would write it
+			// into the package as an orphan. Move it out so it is neither saved nor found by name again.
+			ThrowawayEmitter->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional);
+			ThrowawayEmitter->MarkAsGarbage();
+		}
+		if (Context.HasErrors() || System.GetEmitterHandles().Num() != NumHandlesBefore)
+		{
+			OutError = FString::Printf(TEXT("Removing the throwaway emitter '%s' after rebuilding the system's emitter nodes failed (%d handle(s) before, %d after)."),
+				*ThrowawayName.ToString(), NumHandlesBefore, System.GetEmitterHandles().Num());
+			for (const FText& Error : Context.Errors)
+			{
+				OutError += TEXT(" ") + Error.ToString();
+			}
+			return false;
+		}
+		return true;
+#else
+		OutError = TEXT("Rebuilding emitter nodes is only supported in the Editor.");
+		return false;
+#endif
 	}
 
 	void SaveAndDirtyAsset(UNiagaraSystem* System)
@@ -872,6 +964,17 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteAddEmitter(con
 	if (!AddedHandle.GetId().IsValid())
 	{
 		Result.Errors.Add(FString::Printf(TEXT("Failed to add emitter handle '%s' to system"), *EmitterName));
+		return Result;
+	}
+
+	// The engine's own add path (FNiagaraEditorUtilities::AddEmitterToSystem) rebuilds the system scripts' emitter
+	// nodes right after adding the handle. Without this the new emitter's EmitterSpawn / EmitterUpdate graphs are
+	// never compiled into the system: NS_MuzzleFlash was built this way and never spawned a particle while eleven
+	// structural tests and a clean compile said it was fine (PLAN_3.9, 2026-09-14).
+	FString RebuildError;
+	if (!RebuildSystemEmitterNodes(*System, RebuildError))
+	{
+		Result.Errors.Add(RebuildError);
 		return Result;
 	}
 
@@ -2392,8 +2495,33 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteCompileSystem(
 		return Result;
 	}
 
+	// Systems assembled by add_niagara_emitter before it rebuilt emitter nodes have handles whose emitter scripts
+	// are not part of the compiled system. Rebuild the nodes here so a compile repairs them, and say so.
+	const int32 HandlesWithoutNodes = CountEmitterHandlesWithoutSystemNodes(*System);
+	if (HandlesWithoutNodes > 0)
+	{
+		FString RebuildError;
+		if (!RebuildSystemEmitterNodes(*System, RebuildError))
+		{
+			Result.Errors.Add(RebuildError);
+			return Result;
+		}
+	}
+
 	System->RequestCompile(true);
 	Result.bSuccess = WaitAndReportCompile(System, Result);
+
+	if (HandlesWithoutNodes > 0)
+	{
+		Result.ResultMessage += FString::Printf(
+			TEXT(" Rebuilt the system graph's emitter nodes: %d emitter handle(s) had none, so their emitter scripts were not compiled into the system until now."),
+			HandlesWithoutNodes);
+		if (Result.bSuccess)
+		{
+			SaveAndDirtyAsset(System);
+			Result.ModifiedAssets.Add(SystemPath);
+		}
+	}
 	return Result;
 }
 

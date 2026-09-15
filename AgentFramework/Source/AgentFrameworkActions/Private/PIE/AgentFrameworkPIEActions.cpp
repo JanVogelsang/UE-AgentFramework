@@ -644,7 +644,12 @@ FAgentFrameworkActionResult FAgentFrameworkPIEActions::ExecuteTriggerUIElement(
 	FGeometry Geometry = TargetSlateWidget->GetTickSpaceGeometry();
 	FVector2D Center = Geometry.GetAbsolutePosition() + Geometry.GetAbsoluteSize() * 0.5f;
 
-	TSharedPtr<SWindow> Window = SlateApp.GetActiveTopLevelWindow();
+	// Use the window that actually owns the target widget, not whichever window Slate currently
+	// considers "active". In an automated session the OS foreground (and so Slate's active window)
+	// is often the calling process, not the PIE viewport - GetActiveTopLevelWindow() then silently
+	// dispatches the synthesized click into the wrong window's widget path, so the tool keeps
+	// reporting success while nothing downstream of the target widget ever runs.
+	TSharedPtr<SWindow> Window = SlateApp.FindWidgetWindow(TargetSlateWidget.ToSharedRef());
 	TSharedPtr<FGenericWindow> GenWindow = Window.IsValid() ? Window->GetNativeWindow() : nullptr;
 
 	TSet<FKey> PressedButtons;
