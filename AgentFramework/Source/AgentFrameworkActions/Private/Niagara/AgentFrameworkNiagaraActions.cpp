@@ -58,15 +58,15 @@
 #include "Sound/SoundBase.h"
 namespace
 {
-	FString FormatJsonObjectToUnrealText(const TSharedPtr<FJsonObject>& Obj);
+	FString NiagaraFormatJsonObjectToUnrealText(const TSharedPtr<FJsonObject>& Obj);
 
-	FString FormatJsonValueToUnrealText(const TSharedPtr<FJsonValue>& Val)
+	FString NiagaraFormatJsonValueToUnrealText(const TSharedPtr<FJsonValue>& Val)
 	{
 		if (!Val.IsValid() || Val->IsNull()) return TEXT("");
 		if (Val->Type == EJson::String) return Val->AsString();
 		if (Val->Type == EJson::Number) return FString::Printf(TEXT("%f"), Val->AsNumber());
 		if (Val->Type == EJson::Boolean) return Val->AsBool() ? TEXT("True") : TEXT("False");
-		if (Val->Type == EJson::Object) return FormatJsonObjectToUnrealText(Val->AsObject());
+		if (Val->Type == EJson::Object) return NiagaraFormatJsonObjectToUnrealText(Val->AsObject());
 		if (Val->Type == EJson::Array)
 		{
 			FString OutStr = TEXT("(");
@@ -75,7 +75,7 @@ namespace
 			{
 				if (!bFirst) OutStr += TEXT(",");
 				bFirst = false;
-				OutStr += FormatJsonValueToUnrealText(Elem);
+				OutStr += NiagaraFormatJsonValueToUnrealText(Elem);
 			}
 			OutStr += TEXT(")");
 			return OutStr;
@@ -83,7 +83,7 @@ namespace
 		return TEXT("");
 	}
 
-	FString FormatJsonObjectToUnrealText(const TSharedPtr<FJsonObject>& Obj)
+	FString NiagaraFormatJsonObjectToUnrealText(const TSharedPtr<FJsonObject>& Obj)
 	{
 		if (!Obj.IsValid()) return TEXT("()");
 		FString OutStr = TEXT("(");
@@ -92,7 +92,7 @@ namespace
 		{
 			if (!bFirst) OutStr += TEXT(",");
 			bFirst = false;
-			OutStr += FString(*Pair.Key) + TEXT("=") + FormatJsonValueToUnrealText(Pair.Value);
+			OutStr += FString(*Pair.Key) + TEXT("=") + NiagaraFormatJsonValueToUnrealText(Pair.Value);
 		}
 		OutStr += TEXT(")");
 		return OutStr;
@@ -127,7 +127,7 @@ namespace
 				continue;
 			}
 
-			FString ValueString = FormatJsonValueToUnrealText(Pair.Value);
+			FString ValueString = NiagaraFormatJsonValueToUnrealText(Pair.Value);
 			TargetObject->PreEditChange(Prop);
 			void* PropAddr = Prop->ContainerPtrToValuePtr<void>(TargetObject);
 			const TCHAR* ImportResult = Prop->ImportText_Direct(*ValueString, PropAddr, TargetObject, PPF_None);
@@ -1636,7 +1636,7 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteSetModulePin(c
 	if (!ValueField || !(*ValueField).IsValid()) ValueField = Params->Values.Find(TEXT("Value"));
 	if (ValueField && (*ValueField).IsValid())
 	{
-		Value = FormatJsonValueToUnrealText(*ValueField);
+		Value = NiagaraFormatJsonValueToUnrealText(*ValueField);
 	}
 
 	FString InterfaceClassName;
