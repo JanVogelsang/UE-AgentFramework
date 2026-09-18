@@ -177,12 +177,23 @@ Inspect existing curve keys on any curve DI module input using `list_niagara_par
 }
 ```
 
-### Step 5: Configure Renderers (`add_niagara_renderer`)
-Add visual renderers (`Light`, `Sprite`, `Ribbon`, `Mesh`, `Decal`, `Component`) and configure reflection properties:
-* **Sprite Renderer**: Set `Material`, `FacingMode`, `Alignment`, `SubImageSize`.
-* **Mesh Renderer**: Set `Meshes` array, `SourceMesh`, `bCastShadows`.
-* **Light Renderer**: Set `RadiusScale`, `ColorAdd`, `bCastShadows`.
+* **Dynamic Input Scripts on Module Pins (`dynamic_input`)**:
+  To attach a dynamic calculation script (e.g. `Multiply_Int`, `Multiply_Float`, `Divide_Float`) to a module pin instead of a literal constant:
+```json
+{
+  "_tool_name": "set_niagara_module_pin",
+  "system_path": "/Game/VFX/NS_Explosion",
+  "emitter_name": "CoreFlash",
+  "phase": "EmitterUpdate",
+  "module_type": "SpawnBurstInstantaneous",
+  "pin_name": "Spawn Count",
+  "dynamic_input": "Multiply_Int"
+}
+```
 
+### Step 5: Configure & Manage Renderers
+Add visual renderers (`add_niagara_renderer`), update existing renderers (`edit_niagara_renderer`), or remove unwanted/default renderers (`remove_niagara_renderer`):
+* **Add Renderer**:
 ```json
 {
   "_tool_name": "add_niagara_renderer",
@@ -193,6 +204,48 @@ Add visual renderers (`Light`, `Sprite`, `Ribbon`, `Mesh`, `Decal`, `Component`)
     "RadiusScale": 250.0,
     "bCastShadows": false
   }
+}
+```
+* **Edit Renderer** (modify properties or enable/disable):
+```json
+{
+  "_tool_name": "edit_niagara_renderer",
+  "system_path": "/Game/VFX/NS_Explosion",
+  "emitter_name": "CoreFlash",
+  "renderer_name_or_type": "SpriteRenderer",
+  "b_is_enabled": false,
+  "properties": {
+    "Material": "/Game/Materials/M_ParticleGlow"
+  }
+}
+```
+* **Remove Renderer**:
+```json
+{
+  "_tool_name": "remove_niagara_renderer",
+  "system_path": "/Game/VFX/NS_Explosion",
+  "emitter_name": "CoreFlash",
+  "renderer_name_or_type": "SpriteRenderer"
+}
+```
+
+### Removing Modules & Emitters
+* **Remove Module (`remove_niagara_module`)**:
+```json
+{
+  "_tool_name": "remove_niagara_module",
+  "system_path": "/Game/VFX/NS_Explosion",
+  "emitter_name": "CoreFlash",
+  "phase": "ParticleUpdate",
+  "module_name": "Drag"
+}
+```
+* **Remove Emitter (`remove_niagara_emitter`)**:
+```json
+{
+  "_tool_name": "remove_niagara_emitter",
+  "system_path": "/Game/VFX/NS_Explosion",
+  "emitter_name": "CoreFlash"
 }
 ```
 

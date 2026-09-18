@@ -62,6 +62,12 @@ private:
 	/** Query all active runtime UUserWidget instances in PIE. */
 	FAgentFrameworkActionResult ExecuteGetActiveRuntimeWidgets(const TSharedRef<FJsonObject>& Params, FAgentFrameworkActionResult& Result);
 
+	/** Execute a console command targeting active PIE world. */
+	FAgentFrameworkActionResult ExecuteConsoleCommand(const TSharedRef<FJsonObject>& Params, FAgentFrameworkActionResult& Result);
+
+	/** Call a UFUNCTION on an active PIE actor. */
+	FAgentFrameworkActionResult ExecuteCallActorFunction(const TSharedRef<FJsonObject>& Params, FAgentFrameworkActionResult& Result);
+
 	/** Whether PIE is currently running. */
 	static bool IsPIERunning();
 

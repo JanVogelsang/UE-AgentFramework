@@ -31,6 +31,7 @@ private:
 	FAgentFrameworkActionResult ExecuteSetDataAssetProperties(const TSharedRef<FJsonObject>& Params, FAgentFrameworkActionResult& Result);
 	FAgentFrameworkActionResult ExecuteGetDataAssetInfo(const TSharedRef<FJsonObject>& Params, FAgentFrameworkActionResult& Result);
 	FAgentFrameworkActionResult ExecuteAddInstancedSubobject(const TSharedRef<FJsonObject>& Params, FAgentFrameworkActionResult& Result);
+	FAgentFrameworkActionResult ExecuteSaveAsset(const TSharedRef<FJsonObject>& Params, FAgentFrameworkActionResult& Result);
 
 public:
 	static int32 SetObjectPropertiesFromJsonObject(UObject* TargetObject, const TSharedPtr<FJsonObject>& PropertiesObj, FAgentFrameworkActionResult& Result);

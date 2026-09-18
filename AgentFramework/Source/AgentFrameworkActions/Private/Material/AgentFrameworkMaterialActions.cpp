@@ -196,10 +196,31 @@ FAgentFrameworkActionResult FAgentFrameworkMaterialActions::ExecuteCreateMateria
 	// CRITICAL: Modify() before structural changes for undo support
 	NewMaterial->Modify();
 
+	FString BlendModeStr;
+	if (UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("blend_mode"), BlendModeStr, Result.Errors, false) && !BlendModeStr.IsEmpty())
+	{
+		if (BlendModeStr.Equals(TEXT("BLEND_Opaque"), ESearchCase::IgnoreCase) || BlendModeStr.Equals(TEXT("Opaque"), ESearchCase::IgnoreCase)) NewMaterial->BlendMode = BLEND_Opaque;
+		else if (BlendModeStr.Equals(TEXT("BLEND_Masked"), ESearchCase::IgnoreCase) || BlendModeStr.Equals(TEXT("Masked"), ESearchCase::IgnoreCase)) NewMaterial->BlendMode = BLEND_Masked;
+		else if (BlendModeStr.Equals(TEXT("BLEND_Translucent"), ESearchCase::IgnoreCase) || BlendModeStr.Equals(TEXT("Translucent"), ESearchCase::IgnoreCase)) NewMaterial->BlendMode = BLEND_Translucent;
+		else if (BlendModeStr.Equals(TEXT("BLEND_Additive"), ESearchCase::IgnoreCase) || BlendModeStr.Equals(TEXT("Additive"), ESearchCase::IgnoreCase)) NewMaterial->BlendMode = BLEND_Additive;
+		else if (BlendModeStr.Equals(TEXT("BLEND_Modulate"), ESearchCase::IgnoreCase) || BlendModeStr.Equals(TEXT("Modulate"), ESearchCase::IgnoreCase)) NewMaterial->BlendMode = BLEND_Modulate;
+		else if (BlendModeStr.Equals(TEXT("BLEND_AlphaComposite"), ESearchCase::IgnoreCase) || BlendModeStr.Equals(TEXT("AlphaComposite"), ESearchCase::IgnoreCase)) NewMaterial->BlendMode = BLEND_AlphaComposite;
+	}
+
+	FString ShadingModelStr;
+	if (UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("shading_model"), ShadingModelStr, Result.Errors, false) && !ShadingModelStr.IsEmpty())
+	{
+		if (ShadingModelStr.Equals(TEXT("MSM_Unlit"), ESearchCase::IgnoreCase) || ShadingModelStr.Equals(TEXT("Unlit"), ESearchCase::IgnoreCase)) NewMaterial->SetShadingModel(MSM_Unlit);
+		else if (ShadingModelStr.Equals(TEXT("MSM_DefaultLit"), ESearchCase::IgnoreCase) || ShadingModelStr.Equals(TEXT("DefaultLit"), ESearchCase::IgnoreCase)) NewMaterial->SetShadingModel(MSM_DefaultLit);
+		else if (ShadingModelStr.Equals(TEXT("MSM_Subsurface"), ESearchCase::IgnoreCase) || ShadingModelStr.Equals(TEXT("Subsurface"), ESearchCase::IgnoreCase)) NewMaterial->SetShadingModel(MSM_Subsurface);
+	}
+
 	// Process expressions if provided
 	const TArray<TSharedPtr<FJsonValue>>* ExpressionsArray = nullptr;
 	if (UAgentFrameworkActionUtils::TryGetArrayParam(Params, TEXT("expressions"), ExpressionsArray, Result.Errors, false) && ExpressionsArray)
 	{
+		TMap<FString, UMaterialExpression*> CreatedExpressions;
+
 		for (const TSharedPtr<FJsonValue>& ExprValue : *ExpressionsArray)
 		{
 			if (!ExprValue.IsValid()) continue;
@@ -236,6 +257,22 @@ FAgentFrameworkActionResult FAgentFrameworkMaterialActions::ExecuteCreateMateria
 			else if (ExprType == TEXT("Constant3Vector") || ExprType == TEXT("Color"))
 			{
 				Expression = UMaterialEditingLibrary::CreateMaterialExpression(NewMaterial, UMaterialExpressionConstant3Vector::StaticClass(), PosX, PosY);
+				if (IsValid(Expression))
+				{
+					if (UMaterialExpressionConstant3Vector* Const3Expr = Cast<UMaterialExpressionConstant3Vector>(Expression))
+					{
+						const TArray<TSharedPtr<FJsonValue>>* ColorArr = nullptr;
+						if (ExprObj->TryGetArrayField(TEXT("default_value"), ColorArr) || ExprObj->TryGetArrayField(TEXT("value"), ColorArr))
+						{
+							FLinearColor Color = FLinearColor::White;
+							if (ColorArr && ColorArr->Num() > 0) Color.R = (*ColorArr)[0]->AsNumber();
+							if (ColorArr && ColorArr->Num() > 1) Color.G = (*ColorArr)[1]->AsNumber();
+							if (ColorArr && ColorArr->Num() > 2) Color.B = (*ColorArr)[2]->AsNumber();
+							if (ColorArr && ColorArr->Num() > 3) Color.A = (*ColorArr)[3]->AsNumber();
+							Const3Expr->Constant = Color;
+						}
+					}
+				}
 			}
 			else if (ExprType == TEXT("Multiply"))
 			{
@@ -250,12 +287,18 @@ FAgentFrameworkActionResult FAgentFrameworkMaterialActions::ExecuteCreateMateria
 				Expression = UMaterialEditingLibrary::CreateMaterialExpression(NewMaterial, UMaterialExpressionScalarParameter::StaticClass(), PosX, PosY);
 				if (IsValid(Expression))
 				{
-					FString ParamName;
-					if (UAgentFrameworkActionUtils::TryGetStringParam(ExprObj, TEXT("parameter_name"), ParamName, Result.Errors, false) && !ParamName.IsEmpty())
+					if (UMaterialExpressionScalarParameter* ScalarParamExpr = Cast<UMaterialExpressionScalarParameter>(Expression))
 					{
-						if (UMaterialExpressionScalarParameter* ScalarParamExpr = Cast<UMaterialExpressionScalarParameter>(Expression))
+						FString ParamName;
+						if (UAgentFrameworkActionUtils::TryGetStringParam(ExprObj, TEXT("parameter_name"), ParamName, Result.Errors, false) && !ParamName.IsEmpty())
 						{
 							ScalarParamExpr->ParameterName = FName(*ParamName);
+						}
+						float DefaultVal = 0.0f;
+						if (UAgentFrameworkActionUtils::TryGetFloatParam(ExprObj, TEXT("default_value"), DefaultVal, Result.Errors, false) ||
+							UAgentFrameworkActionUtils::TryGetFloatParam(ExprObj, TEXT("value"), DefaultVal, Result.Errors, false))
+						{
+							ScalarParamExpr->DefaultValue = DefaultVal;
 						}
 					}
 				}
@@ -265,12 +308,22 @@ FAgentFrameworkActionResult FAgentFrameworkMaterialActions::ExecuteCreateMateria
 				Expression = UMaterialEditingLibrary::CreateMaterialExpression(NewMaterial, UMaterialExpressionVectorParameter::StaticClass(), PosX, PosY);
 				if (IsValid(Expression))
 				{
-					FString ParamName;
-					if (UAgentFrameworkActionUtils::TryGetStringParam(ExprObj, TEXT("parameter_name"), ParamName, Result.Errors, false) && !ParamName.IsEmpty())
+					if (UMaterialExpressionVectorParameter* VectorParamExpr = Cast<UMaterialExpressionVectorParameter>(Expression))
 					{
-						if (UMaterialExpressionVectorParameter* VectorParamExpr = Cast<UMaterialExpressionVectorParameter>(Expression))
+						FString ParamName;
+						if (UAgentFrameworkActionUtils::TryGetStringParam(ExprObj, TEXT("parameter_name"), ParamName, Result.Errors, false) && !ParamName.IsEmpty())
 						{
 							VectorParamExpr->ParameterName = FName(*ParamName);
+						}
+						const TArray<TSharedPtr<FJsonValue>>* ColorArr = nullptr;
+						if (ExprObj->TryGetArrayField(TEXT("default_value"), ColorArr) || ExprObj->TryGetArrayField(TEXT("value"), ColorArr))
+						{
+							FLinearColor Color = FLinearColor::White;
+							if (ColorArr && ColorArr->Num() > 0) Color.R = (*ColorArr)[0]->AsNumber();
+							if (ColorArr && ColorArr->Num() > 1) Color.G = (*ColorArr)[1]->AsNumber();
+							if (ColorArr && ColorArr->Num() > 2) Color.B = (*ColorArr)[2]->AsNumber();
+							if (ColorArr && ColorArr->Num() > 3) Color.A = (*ColorArr)[3]->AsNumber();
+							VectorParamExpr->DefaultValue = Color;
 						}
 					}
 				}
@@ -280,8 +333,35 @@ FAgentFrameworkActionResult FAgentFrameworkMaterialActions::ExecuteCreateMateria
 				Expression = UMaterialEditingLibrary::CreateMaterialExpression(NewMaterial, UMaterialExpressionTextureCoordinate::StaticClass(), PosX, PosY);
 			}
 
+			// Dynamic expression class lookup fallback for ParticleColor or any other UMaterialExpression
+			if (!Expression && !ExprType.IsEmpty())
+			{
+				FString CleanExprName = ExprType;
+				if (!CleanExprName.StartsWith(TEXT("MaterialExpression")))
+				{
+					CleanExprName = TEXT("MaterialExpression") + CleanExprName;
+				}
+				UClass* ExprClass = UClass::TryFindTypeSlow<UClass>(*CleanExprName);
+				if (!ExprClass)
+				{
+					ExprClass = FindObject<UClass>(nullptr, *CleanExprName);
+				}
+				if (ExprClass && ExprClass->IsChildOf(UMaterialExpression::StaticClass()))
+				{
+					Expression = UMaterialEditingLibrary::CreateMaterialExpression(NewMaterial, ExprClass, PosX, PosY);
+				}
+			}
+
 			if (IsValid(Expression))
 			{
+				FString ExprId;
+				if (UAgentFrameworkActionUtils::TryGetStringParam(ExprObj, TEXT("id"), ExprId, Result.Errors, false) ||
+					UAgentFrameworkActionUtils::TryGetStringParam(ExprObj, TEXT("name"), ExprId, Result.Errors, false))
+				{
+					CreatedExpressions.Add(ExprId, Expression);
+				}
+				CreatedExpressions.Add(ExprType, Expression);
+
 				FString ConnectTo;
 				if (UAgentFrameworkActionUtils::TryGetStringParam(ExprObj, TEXT("connect_to"), ConnectTo, Result.Errors, false) && !ConnectTo.IsEmpty())
 				{
@@ -290,12 +370,15 @@ FAgentFrameworkActionResult FAgentFrameworkMaterialActions::ExecuteCreateMateria
 					else if (ConnectTo == TEXT("Metallic")) MatProp = MP_Metallic;
 					else if (ConnectTo == TEXT("Specular")) MatProp = MP_Specular;
 					else if (ConnectTo == TEXT("Roughness")) MatProp = MP_Roughness;
-					else if (ConnectTo == TEXT("EmissiveColor")) MatProp = MP_EmissiveColor;
+					else if (ConnectTo == TEXT("EmissiveColor") || ConnectTo == TEXT("Emissive")) MatProp = MP_EmissiveColor;
 					else if (ConnectTo == TEXT("Normal")) MatProp = MP_Normal;
 					else if (ConnectTo == TEXT("Opacity")) MatProp = MP_Opacity;
 					else if (ConnectTo == TEXT("OpacityMask")) MatProp = MP_OpacityMask;
 
-					UMaterialEditingLibrary::ConnectMaterialProperty(Expression, TEXT(""), MatProp);
+					FString OutputName;
+					UAgentFrameworkActionUtils::TryGetStringParam(ExprObj, TEXT("output_name"), OutputName, Result.Errors, false);
+
+					UMaterialEditingLibrary::ConnectMaterialProperty(Expression, OutputName, MatProp);
 				}
 
 				UE_LOG(LogAgentFramework, Log, TEXT("MaterialActions: Added expression %s at (%d, %d)"), *ExprType, PosX, PosY);
@@ -303,6 +386,51 @@ FAgentFrameworkActionResult FAgentFrameworkMaterialActions::ExecuteCreateMateria
 			else
 			{
 				Result.Warnings.Add(FString::Printf(TEXT("Unknown or failed expression type: %s"), *ExprType));
+			}
+		}
+
+		// Process inter-expression connections if provided
+		const TArray<TSharedPtr<FJsonValue>>* ConnectionsArray = nullptr;
+		if (UAgentFrameworkActionUtils::TryGetArrayParam(Params, TEXT("connections"), ConnectionsArray, Result.Errors, false) && ConnectionsArray)
+		{
+			for (const TSharedPtr<FJsonValue>& ConnVal : *ConnectionsArray)
+			{
+				if (!ConnVal.IsValid()) continue;
+				const TSharedPtr<FJsonObject>& ConnObj = ConnVal->AsObject();
+				if (!ConnObj.IsValid()) continue;
+
+				FString FromName, ToName, FromOutput, ToInput, ToProp;
+				UAgentFrameworkActionUtils::TryGetStringParam(ConnObj, TEXT("from"), FromName, Result.Errors, false);
+				UAgentFrameworkActionUtils::TryGetStringParam(ConnObj, TEXT("from_output"), FromOutput, Result.Errors, false);
+				UAgentFrameworkActionUtils::TryGetStringParam(ConnObj, TEXT("to"), ToName, Result.Errors, false);
+				UAgentFrameworkActionUtils::TryGetStringParam(ConnObj, TEXT("to_input"), ToInput, Result.Errors, false);
+				UAgentFrameworkActionUtils::TryGetStringParam(ConnObj, TEXT("to_property"), ToProp, Result.Errors, false);
+
+				UMaterialExpression** FromExprPtr = CreatedExpressions.Find(FromName);
+				if (!FromExprPtr || !IsValid(*FromExprPtr)) continue;
+
+				if (!ToProp.IsEmpty())
+				{
+					EMaterialProperty MatProp = MP_BaseColor;
+					if (ToProp == TEXT("BaseColor")) MatProp = MP_BaseColor;
+					else if (ToProp == TEXT("Metallic")) MatProp = MP_Metallic;
+					else if (ToProp == TEXT("Specular")) MatProp = MP_Specular;
+					else if (ToProp == TEXT("Roughness")) MatProp = MP_Roughness;
+					else if (ToProp == TEXT("EmissiveColor") || ToProp == TEXT("Emissive")) MatProp = MP_EmissiveColor;
+					else if (ToProp == TEXT("Normal")) MatProp = MP_Normal;
+					else if (ToProp == TEXT("Opacity")) MatProp = MP_Opacity;
+					else if (ToProp == TEXT("OpacityMask")) MatProp = MP_OpacityMask;
+
+					UMaterialEditingLibrary::ConnectMaterialProperty(*FromExprPtr, FromOutput, MatProp);
+				}
+				else if (!ToName.IsEmpty())
+				{
+					UMaterialExpression** ToExprPtr = CreatedExpressions.Find(ToName);
+					if (ToExprPtr && IsValid(*ToExprPtr))
+					{
+						UMaterialEditingLibrary::ConnectMaterialExpressions(*FromExprPtr, FromOutput, *ToExprPtr, ToInput);
+					}
+				}
 			}
 		}
 	}

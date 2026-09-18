@@ -18,6 +18,7 @@
 #include "UObject/UnrealType.h"
 #include "Engine/PostProcessVolume.h"
 #include "GameFramework/WorldSettings.h"
+#include "GameFramework/PlayerController.h"
 #include "EngineUtils.h"
 
 #if WITH_EDITOR
@@ -341,15 +342,54 @@ FAgentFrameworkActionResult FAgentFrameworkPerformanceActions::ExecuteAction(con
 			return Result;
 		}
 
-		UWorld* World = GetEditorWorld();
+		UWorld* World = nullptr;
+		int32 WorldContextIndex = 0;
+		Params->TryGetNumberField(TEXT("world_context_index"), WorldContextIndex);
+
+		if (GEditor && GEditor->PlayWorld)
+		{
+			FWorldContext* PIEContext = GEditor->GetPIEWorldContext(WorldContextIndex);
+			if (PIEContext && PIEContext->World())
+			{
+				World = PIEContext->World();
+			}
+			else
+			{
+				World = GEditor->GetCurrentPlayWorld();
+			}
+		}
+
+		if (!World)
+		{
+			World = GetEditorWorld();
+		}
+
 		if (!GEngine || !IsValid(GEngine))
 		{
 			Result.Errors.Add(TEXT("GEngine not available."));
 			return Result;
 		}
 
-		bool bExecuted = GEngine->Exec(World, *Command);
-		UE_LOG(LogAgentFramework, Log, TEXT("PerformanceActions: Executed console command: %s (result=%d)"), *Command, (int)bExecuted);
+		bool bExecuted = false;
+		if (World)
+		{
+			if (APlayerController* PC = World->GetFirstPlayerController())
+			{
+				PC->ConsoleCommand(Command, true);
+				bExecuted = true;
+			}
+			else
+			{
+				bExecuted = GEngine->Exec(World, *Command);
+			}
+		}
+		else
+		{
+			bExecuted = GEngine->Exec(nullptr, *Command);
+		}
+
+		UE_LOG(LogAgentFramework, Log, TEXT("PerformanceActions: Executed console command: %s (result=%d, world=%s)"),
+			*Command, (int)bExecuted, World ? *World->GetName() : TEXT("None"));
 
 		Result.bSuccess = true;
 		Result.ResultMessage = FString::Printf(TEXT("Executed: %s"), *Command);

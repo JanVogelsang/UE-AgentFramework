@@ -248,7 +248,14 @@ namespace
 			{
 				FSavePackageArgs SaveArgs;
 				SaveArgs.TopLevelFlags = RF_Standalone;
-				UPackage::SavePackage(Package, System, *PackageFilename, SaveArgs);
+				if (!UPackage::SavePackage(Package, System, *PackageFilename, SaveArgs))
+				{
+					UE_LOG(LogAgentFramework, Warning, TEXT("SaveAndDirtyAsset: Failed to save package '%s' to '%s'."), *Package->GetName(), *PackageFilename);
+				}
+			}
+			else
+			{
+				UE_LOG(LogAgentFramework, Warning, TEXT("SaveAndDirtyAsset: Failed to resolve package filename for '%s'."), *Package->GetName());
 			}
 		}
 	}
@@ -274,6 +281,10 @@ TArray<FString> FAgentFrameworkNiagaraActions::GetSupportedToolNames() const
 		TEXT("set_niagara_parameter"),
 		TEXT("set_niagara_data_interface"),
 		TEXT("add_niagara_renderer"),
+		TEXT("edit_niagara_renderer"),
+		TEXT("remove_niagara_renderer"),
+		TEXT("remove_niagara_emitter"),
+		TEXT("remove_niagara_module"),
 		TEXT("list_niagara_parameters"),
 		TEXT("remove_niagara_parameter")
 	};
@@ -345,9 +356,10 @@ bool FAgentFrameworkNiagaraActions::ValidateParams(const TSharedRef<FJsonObject>
 				!Params->HasField(TEXT("asset_path")) && !Params->HasField(TEXT("AssetPath")) &&
 				!Params->HasField(TEXT("interface_class")) && !Params->HasField(TEXT("data_interface_class")) && !Params->HasField(TEXT("DataInterfaceClass")) &&
 				!Params->HasField(TEXT("properties")) && !Params->HasField(TEXT("Properties")) &&
-				!Params->HasField(TEXT("curve_keys")) && !Params->HasField(TEXT("CurveKeys")))
+				!Params->HasField(TEXT("curve_keys")) && !Params->HasField(TEXT("CurveKeys")) &&
+				!Params->HasField(TEXT("dynamic_input")) && !Params->HasField(TEXT("DynamicInput")))
 			{
-				OutErrors.Add(TEXT("Either 'value', 'link_parameter', 'asset_path', 'interface_class', 'properties', or 'curve_keys' must be provided for set_niagara_module_pin."));
+				OutErrors.Add(TEXT("Either 'value', 'link_parameter', 'asset_path', 'interface_class', 'properties', 'curve_keys', or 'dynamic_input' must be provided for set_niagara_module_pin."));
 				return false;
 			}
 
@@ -411,6 +423,45 @@ bool FAgentFrameworkNiagaraActions::ValidateParams(const TSharedRef<FJsonObject>
 				return false;
 			}
 		}
+		else if (ToolName == TEXT("edit_niagara_renderer") || ToolName == TEXT("remove_niagara_renderer"))
+		{
+			FString EmitterName;
+			if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("emitter_name"), EmitterName, OutErrors, true))
+			{
+				return false;
+			}
+			if (!Params->HasField(TEXT("renderer_type")) && !Params->HasField(TEXT("renderer_index")) && !Params->HasField(TEXT("target_index")))
+			{
+				OutErrors.Add(TEXT("Either 'renderer_type' or 'renderer_index' must be provided."));
+				return false;
+			}
+		}
+		else if (ToolName == TEXT("remove_niagara_emitter"))
+		{
+			FString EmitterName;
+			if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("emitter_name"), EmitterName, OutErrors, true))
+			{
+				return false;
+			}
+		}
+		else if (ToolName == TEXT("remove_niagara_module"))
+		{
+			FString Phase, ModuleType;
+			if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("phase"), Phase, OutErrors, true) ||
+				!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("module_type"), ModuleType, OutErrors, true))
+			{
+				return false;
+			}
+			const bool bIsSystemPhase = (Phase == TEXT("SystemSpawn") || Phase == TEXT("SystemUpdate"));
+			if (!bIsSystemPhase)
+			{
+				FString EmitterName;
+				if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("emitter_name"), EmitterName, OutErrors, true))
+				{
+					return false;
+				}
+			}
+		}
 		else if (ToolName == TEXT("list_niagara_parameters"))
 		{
 			// system_path or asset_path validated in the outer common block
@@ -456,6 +507,10 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteAction(const T
 	else if (ToolName == TEXT("set_niagara_parameter"))          Result = ExecuteSetNiagaraParameter(Params, Result);
 	else if (ToolName == TEXT("set_niagara_data_interface"))     Result = ExecuteSetDataInterface(Params, Result);
 	else if (ToolName == TEXT("add_niagara_renderer"))            Result = ExecuteAddRenderer(Params, Result);
+	else if (ToolName == TEXT("edit_niagara_renderer"))           Result = ExecuteEditRenderer(Params, Result);
+	else if (ToolName == TEXT("remove_niagara_renderer"))         Result = ExecuteRemoveRenderer(Params, Result);
+	else if (ToolName == TEXT("remove_niagara_emitter"))          Result = ExecuteRemoveEmitter(Params, Result);
+	else if (ToolName == TEXT("remove_niagara_module"))           Result = ExecuteRemoveModule(Params, Result);
 	else if (ToolName == TEXT("list_niagara_parameters"))         Result = ExecuteListNiagaraParameters(Params, Result);
 	else if (ToolName == TEXT("remove_niagara_parameter"))       Result = ExecuteRemoveNiagaraParameter(Params, Result);
 	else
@@ -952,15 +1007,7 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteAddEmitter(con
 		}
 	}
 
-	// Duplicate the emitter into the system to prevent mutating engine templates and avoid shared instance aliasing
-	FName UniqueEmitterName = MakeUniqueObjectName(System, UNiagaraEmitter::StaticClass(), FName(*EmitterName));
-	UNiagaraEmitter* DuplicatedEmitter = DuplicateObject<UNiagaraEmitter>(SourceEmitter, System, UniqueEmitterName);
-	if (!IsValid(DuplicatedEmitter))
-	{
-		DuplicatedEmitter = SourceEmitter;
-	}
-
-	const FNiagaraEmitterHandle& AddedHandle = System->AddEmitterHandle(*DuplicatedEmitter, FName(*EmitterName), VersionGuid);
+	const FNiagaraEmitterHandle& AddedHandle = System->AddEmitterHandle(*SourceEmitter, FName(*EmitterName), VersionGuid);
 	if (!AddedHandle.GetId().IsValid())
 	{
 		Result.Errors.Add(FString::Printf(TEXT("Failed to add emitter handle '%s' to system"), *EmitterName));
@@ -1672,10 +1719,14 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteSetModulePin(c
 		CurveKeysValue = Params->TryGetField(TEXT("CurveKeys"));
 	}
 
-	const bool bHasValue = !Value.IsEmpty() || !LinkParam.IsEmpty() || !AssetPath.IsEmpty() || !InterfaceClassName.IsEmpty() || (PropertiesObj && PropertiesObj->IsValid()) || (CurveKeysValue.IsValid() && !CurveKeysValue->IsNull());
+	FString DynamicInput;
+	Params->TryGetStringField(TEXT("dynamic_input"), DynamicInput);
+	if (DynamicInput.IsEmpty()) Params->TryGetStringField(TEXT("DynamicInput"), DynamicInput);
+
+	const bool bHasValue = !Value.IsEmpty() || !LinkParam.IsEmpty() || !AssetPath.IsEmpty() || !InterfaceClassName.IsEmpty() || (PropertiesObj && PropertiesObj->IsValid()) || (CurveKeysValue.IsValid() && !CurveKeysValue->IsNull()) || !DynamicInput.IsEmpty();
 	if (!bHasValue)
 	{
-		Result.Errors.Add(TEXT("Either 'value', 'link_parameter', 'asset_path', 'interface_class', 'properties', or 'curve_keys' must be provided for set_niagara_module_pin."));
+		Result.Errors.Add(TEXT("Either 'value', 'link_parameter', 'asset_path', 'interface_class', 'properties', 'curve_keys', or 'dynamic_input' must be provided for set_niagara_module_pin."));
 		return Result;
 	}
 
@@ -2109,6 +2160,62 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteSetModulePin(c
 		}
 
 		FString FormattedValue = Value;
+		if (UEnum* Enum = Cast<UEnum>(TargetPin->PinType.PinSubCategoryObject.Get()))
+		{
+			FString ResolvedEnumValue;
+			bool bFoundEnum = false;
+			TArray<FString> ValidNames;
+			TArray<FString> ValidDisplayNames;
+
+			for (int32 i = 0; i < Enum->NumEnums() - 1; ++i)
+			{
+				FString EnumName = Enum->GetNameStringByIndex(i);
+				FString DisplayName = Enum->GetDisplayNameTextByIndex(i).ToString();
+				ValidNames.Add(EnumName);
+				ValidDisplayNames.Add(DisplayName);
+
+				if (Value.Equals(EnumName, ESearchCase::IgnoreCase) ||
+					Value.Equals(DisplayName, ESearchCase::IgnoreCase))
+				{
+					ResolvedEnumValue = EnumName;
+					bFoundEnum = true;
+					break;
+				}
+
+				if (EnumName.Contains(TEXT("::")))
+				{
+					FString ShortName = EnumName.RightChop(EnumName.Find(TEXT("::"), ESearchCase::CaseSensitive, ESearchDir::FromEnd) + 2);
+					if (Value.Equals(ShortName, ESearchCase::IgnoreCase))
+					{
+						ResolvedEnumValue = EnumName;
+						bFoundEnum = true;
+						break;
+					}
+				}
+			}
+
+			if (!bFoundEnum && Value.IsNumeric())
+			{
+				int32 IntVal = FCString::Atoi(*Value);
+				if (IntVal >= 0 && IntVal < Enum->NumEnums() - 1)
+				{
+					ResolvedEnumValue = Enum->GetNameStringByIndex(IntVal);
+					bFoundEnum = true;
+				}
+			}
+
+			if (bFoundEnum)
+			{
+				FormattedValue = ResolvedEnumValue;
+			}
+			else
+			{
+				Result.Errors.Add(FString::Printf(TEXT("Invalid value '%s' for static switch enum pin '%s'. Valid options: [%s] (or display names: [%s])."),
+					*Value, *PinName, *FString::Join(ValidNames, TEXT(", ")), *FString::Join(ValidDisplayNames, TEXT(", "))));
+				return Result;
+			}
+		}
+
 		if (FormattedValue.Contains(TEXT(",")) && !FormattedValue.StartsWith(TEXT("(")) && !FormattedValue.EndsWith(TEXT(")")))
 		{
 			FormattedValue = FString::Printf(TEXT("(%s)"), *FormattedValue);
@@ -2122,7 +2229,77 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteSetModulePin(c
 		const UEdGraphSchema_Niagara* NiagaraSchema = GetDefault<UEdGraphSchema_Niagara>();
 		FNiagaraTypeDefinition InputType = NiagaraSchema ? NiagaraSchema->PinToTypeDefinition(TargetPin) : FNiagaraTypeDefinition::GetFloatDef();
 
-		if (!LinkParam.IsEmpty())
+		if (!DynamicInput.IsEmpty())
+		{
+			CleanOverridePinConnectedNodes(TargetPin);
+
+			FString DynamicInputPath = DynamicInput;
+			if (!DynamicInputPath.StartsWith(TEXT("/")))
+			{
+				FString PotentialPath = FString::Printf(TEXT("/Niagara/Modules/Expressions/%s.%s"), *DynamicInput, *DynamicInput);
+				if (LoadObject<UNiagaraScript>(nullptr, *PotentialPath))
+				{
+					DynamicInputPath = PotentialPath;
+				}
+				else
+				{
+					PotentialPath = FString::Printf(TEXT("/Niagara/Modules/Math/%s.%s"), *DynamicInput, *DynamicInput);
+					if (LoadObject<UNiagaraScript>(nullptr, *PotentialPath))
+					{
+						DynamicInputPath = PotentialPath;
+					}
+					else
+					{
+						PotentialPath = FString::Printf(TEXT("/Niagara/Modules/%s.%s"), *DynamicInput, *DynamicInput);
+						if (LoadObject<UNiagaraScript>(nullptr, *PotentialPath))
+						{
+							DynamicInputPath = PotentialPath;
+						}
+					}
+				}
+			}
+
+			UNiagaraScript* DynamicInputScript = LoadObject<UNiagaraScript>(nullptr, *DynamicInputPath);
+			if (!IsValid(DynamicInputScript))
+			{
+				FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+				TArray<FAssetData> ScriptAssets;
+				AssetRegistryModule.Get().GetAssetsByClass(UNiagaraScript::StaticClass()->GetClassPathName(), ScriptAssets, true);
+				for (const FAssetData& AssetData : ScriptAssets)
+				{
+					if (AssetData.AssetName.ToString().Equals(DynamicInput, ESearchCase::IgnoreCase))
+					{
+						DynamicInputScript = Cast<UNiagaraScript>(AssetData.GetAsset());
+						break;
+					}
+				}
+			}
+
+			if (!IsValid(DynamicInputScript))
+			{
+				Result.Errors.Add(FString::Printf(TEXT("Could not find Niagara dynamic input script for '%s'"), *DynamicInput));
+				return Result;
+			}
+
+			UNiagaraNodeFunctionCall* OutDynamicNode = nullptr;
+			FNiagaraStackGraphUtilities::SetDynamicInputForFunctionInput(
+				*TargetPin,
+				DynamicInputScript,
+				OutDynamicNode);
+
+			if (!IsValid(OutDynamicNode))
+			{
+				Result.Errors.Add(FString::Printf(TEXT("Failed to attach dynamic input '%s' to pin '%s'"), *DynamicInput, *PinName));
+				return Result;
+			}
+
+			if (UNiagaraNode* OwningNode = Cast<UNiagaraNode>(TargetPin->GetOwningNode()))
+			{
+				OwningNode->MarkNodeRequiresSynchronization(TEXT("OverridePin DynamicInput Changed"), true);
+			}
+			TargetNode->MarkNodeRequiresSynchronization(TEXT("OverridePin DynamicInput Changed"), true);
+		}
+		else if (!LinkParam.IsEmpty())
 		{
 			FString ResolvedLinkParam = LinkParam;
 			if (!ResolvedLinkParam.Contains(TEXT(".")))
@@ -2306,6 +2483,29 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteSetModulePin(c
 			if (UNiagaraNode* OwningNode = Cast<UNiagaraNode>(TargetPin->GetOwningNode()))
 			{
 				OwningNode->MarkNodeRequiresSynchronization(TEXT("OverridePin Default Value Changed"), true);
+			}
+		}
+	}
+
+	// Check for inert pin warnings (e.g. Color Mode is Unset or Lifetime Mode mismatch)
+	for (UEdGraphPin* NodePin : TargetNode->Pins)
+	{
+		if (NodePin && NodePin->Direction == EGPD_Input && NodePin->PinType.PinSubCategoryObject.IsValid())
+		{
+			FString SwitchPinName = NodePin->PinName.ToString();
+			if (SwitchPinName.Contains(TEXT("Mode")) || SwitchPinName.Contains(TEXT("Switch")))
+			{
+				FString SwitchVal = NodePin->DefaultValue;
+				if (PinName.Contains(TEXT("Color")) && SwitchPinName.Contains(TEXT("Color")) && SwitchVal.Contains(TEXT("Unset"), ESearchCase::IgnoreCase))
+				{
+					Result.Warnings.Add(FString::Printf(TEXT("Advisory: Pin '%s' was set, but static switch '%s' on module '%s' is currently '%s'. The value will not take effect until '%s' is changed."),
+						*PinName, *SwitchPinName, *ModuleType, *SwitchVal, *SwitchPinName));
+				}
+				else if (PinName.Contains(TEXT("Lifetime")) && SwitchPinName.Contains(TEXT("Lifetime")) && SwitchVal.Contains(TEXT("Random"), ESearchCase::IgnoreCase) && !PinName.Contains(TEXT("Min")) && !PinName.Contains(TEXT("Max")))
+				{
+					Result.Warnings.Add(FString::Printf(TEXT("Advisory: Pin '%s' was set, but static switch '%s' on module '%s' is currently '%s'. Pin may be gated off."),
+						*PinName, *SwitchPinName, *ModuleType, *SwitchVal));
+				}
 			}
 		}
 	}
@@ -2511,16 +2711,17 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteCompileSystem(
 	System->RequestCompile(true);
 	Result.bSuccess = WaitAndReportCompile(System, Result);
 
+	if (Result.bSuccess)
+	{
+		SaveAndDirtyAsset(System);
+		Result.ModifiedAssets.Add(SystemPath);
+	}
+
 	if (HandlesWithoutNodes > 0)
 	{
 		Result.ResultMessage += FString::Printf(
 			TEXT(" Rebuilt the system graph's emitter nodes: %d emitter handle(s) had none, so their emitter scripts were not compiled into the system until now."),
 			HandlesWithoutNodes);
-		if (Result.bSuccess)
-		{
-			SaveAndDirtyAsset(System);
-			Result.ModifiedAssets.Add(SystemPath);
-		}
 	}
 	return Result;
 }
@@ -3108,6 +3309,12 @@ bool FAgentFrameworkNiagaraActions::WaitAndReportCompile(UNiagaraSystem* System,
 	}
 
 	bool bCompileSuccess = (Result.Errors.Num() == 0);
+
+	if (bCompileSuccess && Result.ResultMessage.IsEmpty())
+	{
+		Result.ResultMessage = FString::Printf(TEXT("Successfully compiled Niagara System '%s' (%d scripts checked, 0 errors%s)."),
+			*System->GetPathName(), ActiveScripts.Num(), Result.Warnings.Num() > 0 ? *FString::Printf(TEXT(", %d warning(s)"), Result.Warnings.Num()) : TEXT(""));
+	}
 
 	if (!bCompileSuccess)
 	{
@@ -3964,6 +4171,552 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteAddRenderer(co
 	return Result;
 }
 
+FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteEditRenderer(const TSharedRef<FJsonObject>& Params, FAgentFrameworkActionResult& Result)
+{
+#if WITH_EDITOR
+	FString SystemPath;
+	if (!Params->TryGetStringField(TEXT("system_path"), SystemPath) || SystemPath.IsEmpty())
+	{
+		if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("asset_path"), SystemPath, Result.Errors, true))
+		{
+			return Result;
+		}
+	}
+
+	FString EmitterName;
+	if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("emitter_name"), EmitterName, Result.Errors, true))
+	{
+		return Result;
+	}
+
+	UNiagaraSystem* System = LoadObject<UNiagaraSystem>(nullptr, *SystemPath);
+	if (!IsValid(System))
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Niagara System not found at %s"), *SystemPath));
+		return Result;
+	}
+
+	FNiagaraEmitterHandle* TargetHandle = nullptr;
+	for (FNiagaraEmitterHandle& Handle : System->GetEmitterHandles())
+	{
+		if (Handle.GetName().ToString() == EmitterName)
+		{
+			TargetHandle = &Handle;
+			break;
+		}
+	}
+
+	if (!TargetHandle)
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Emitter '%s' not found in system '%s'."), *EmitterName, *SystemPath));
+		return Result;
+	}
+
+	UNiagaraEmitter* Emitter = TargetHandle->GetInstance().Emitter;
+	if (!IsValid(Emitter))
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Emitter instance is invalid for emitter '%s'."), *EmitterName));
+		return Result;
+	}
+
+	FVersionedNiagaraEmitterData* EmitterData = Emitter->GetLatestEmitterData();
+	if (!EmitterData)
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Emitter data is invalid for emitter '%s'."), *EmitterName));
+		return Result;
+	}
+
+	const TArray<UNiagaraRendererProperties*>& Renderers = EmitterData->GetRenderers();
+	if (Renderers.Num() == 0)
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Emitter '%s' has no renderers to edit."), *EmitterName));
+		return Result;
+	}
+
+	UNiagaraRendererProperties* TargetRenderer = nullptr;
+	int32 TargetIndex = INDEX_NONE;
+	if (Params->TryGetNumberField(TEXT("renderer_index"), TargetIndex) || Params->TryGetNumberField(TEXT("target_index"), TargetIndex))
+	{
+		if (Renderers.IsValidIndex(TargetIndex))
+		{
+			TargetRenderer = Renderers[TargetIndex];
+		}
+		else
+		{
+			Result.Errors.Add(FString::Printf(TEXT("Invalid renderer_index %d. Emitter has %d renderer(s)."), TargetIndex, Renderers.Num()));
+			return Result;
+		}
+	}
+	else
+	{
+		FString RendererType;
+		Params->TryGetStringField(TEXT("renderer_type"), RendererType);
+		for (UNiagaraRendererProperties* Renderer : Renderers)
+		{
+			if (Renderer && (
+				Renderer->GetClass()->GetName().Contains(RendererType, ESearchCase::IgnoreCase) ||
+				Renderer->GetName().Contains(RendererType, ESearchCase::IgnoreCase)))
+			{
+				TargetRenderer = Renderer;
+				break;
+			}
+		}
+	}
+
+	if (!IsValid(TargetRenderer))
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Could not find matching renderer on emitter '%s'."), *EmitterName));
+		return Result;
+	}
+
+	Emitter->Modify();
+	System->Modify();
+
+	if (Params->HasField(TEXT("enabled")))
+	{
+		bool bEnabled = Params->GetBoolField(TEXT("enabled"));
+		TargetRenderer->SetIsEnabled(bEnabled);
+	}
+	else if (Params->HasField(TEXT("bIsEnabled")))
+	{
+		bool bEnabled = Params->GetBoolField(TEXT("bIsEnabled"));
+		TargetRenderer->SetIsEnabled(bEnabled);
+	}
+
+	const TSharedPtr<FJsonObject>* PropertiesObjPtr = nullptr;
+	if (Params->TryGetObjectField(TEXT("properties"), PropertiesObjPtr) && PropertiesObjPtr && (*PropertiesObjPtr).IsValid())
+	{
+		ApplyPropertiesFromJsonObject(TargetRenderer, *PropertiesObjPtr, Result);
+	}
+
+	TargetRenderer->PostEditChange();
+	Emitter->MarkPackageDirty();
+
+	Result.bSuccess = WaitAndReportCompile(System, Result);
+	if (Result.bSuccess)
+	{
+		SaveAndDirtyAsset(System);
+	}
+	Result.ResultMessage = FString::Printf(TEXT("Successfully edited renderer '%s' on emitter '%s' in system '%s'."),
+		*TargetRenderer->GetClass()->GetName(), *EmitterName, *SystemPath);
+	Result.ModifiedAssets.Add(SystemPath);
+#else
+	Result.Errors.Add(TEXT("Renderer configuration is only supported in Editor builds."));
+#endif
+	return Result;
+}
+
+FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteRemoveRenderer(const TSharedRef<FJsonObject>& Params, FAgentFrameworkActionResult& Result)
+{
+#if WITH_EDITOR
+	FString SystemPath;
+	if (!Params->TryGetStringField(TEXT("system_path"), SystemPath) || SystemPath.IsEmpty())
+	{
+		if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("asset_path"), SystemPath, Result.Errors, true))
+		{
+			return Result;
+		}
+	}
+
+	FString EmitterName;
+	if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("emitter_name"), EmitterName, Result.Errors, true))
+	{
+		return Result;
+	}
+
+	UNiagaraSystem* System = LoadObject<UNiagaraSystem>(nullptr, *SystemPath);
+	if (!IsValid(System))
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Niagara System not found at %s"), *SystemPath));
+		return Result;
+	}
+
+	FNiagaraEmitterHandle* TargetHandle = nullptr;
+	for (FNiagaraEmitterHandle& Handle : System->GetEmitterHandles())
+	{
+		if (Handle.GetName().ToString() == EmitterName)
+		{
+			TargetHandle = &Handle;
+			break;
+		}
+	}
+
+	if (!TargetHandle)
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Emitter '%s' not found in system '%s'."), *EmitterName, *SystemPath));
+		return Result;
+	}
+
+	UNiagaraEmitter* Emitter = TargetHandle->GetInstance().Emitter;
+	if (!IsValid(Emitter))
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Emitter instance is invalid for emitter '%s'."), *EmitterName));
+		return Result;
+	}
+
+	FVersionedNiagaraEmitterData* EmitterData = Emitter->GetLatestEmitterData();
+	if (!EmitterData)
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Emitter data is invalid for emitter '%s'."), *EmitterName));
+		return Result;
+	}
+
+	const TArray<UNiagaraRendererProperties*>& Renderers = EmitterData->GetRenderers();
+	if (Renderers.Num() == 0)
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Emitter '%s' has no renderers to remove."), *EmitterName));
+		return Result;
+	}
+
+	UNiagaraRendererProperties* TargetRenderer = nullptr;
+	int32 TargetIndex = INDEX_NONE;
+	if (Params->TryGetNumberField(TEXT("renderer_index"), TargetIndex) || Params->TryGetNumberField(TEXT("target_index"), TargetIndex))
+	{
+		if (Renderers.IsValidIndex(TargetIndex))
+		{
+			TargetRenderer = Renderers[TargetIndex];
+		}
+		else
+		{
+			Result.Errors.Add(FString::Printf(TEXT("Invalid renderer_index %d. Emitter has %d renderer(s)."), TargetIndex, Renderers.Num()));
+			return Result;
+		}
+	}
+	else
+	{
+		FString RendererType;
+		Params->TryGetStringField(TEXT("renderer_type"), RendererType);
+		for (UNiagaraRendererProperties* Renderer : Renderers)
+		{
+			if (Renderer && (
+				Renderer->GetClass()->GetName().Contains(RendererType, ESearchCase::IgnoreCase) ||
+				Renderer->GetName().Contains(RendererType, ESearchCase::IgnoreCase)))
+			{
+				TargetRenderer = Renderer;
+				break;
+			}
+		}
+	}
+
+	if (!IsValid(TargetRenderer))
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Could not find matching renderer on emitter '%s' to remove."), *EmitterName));
+		return Result;
+	}
+
+	FString RendererClassName = TargetRenderer->GetClass()->GetName();
+
+	Emitter->Modify();
+	System->Modify();
+
+	Emitter->RemoveRenderer(TargetRenderer, EmitterData->Version.VersionGuid);
+	TargetRenderer->MarkAsGarbage();
+
+	Emitter->MarkPackageDirty();
+
+	Result.bSuccess = WaitAndReportCompile(System, Result);
+	if (Result.bSuccess)
+	{
+		SaveAndDirtyAsset(System);
+	}
+	Result.ResultMessage = FString::Printf(TEXT("Successfully removed renderer '%s' from emitter '%s' in system '%s'."),
+		*RendererClassName, *EmitterName, *SystemPath);
+	Result.ModifiedAssets.Add(SystemPath);
+#else
+	Result.Errors.Add(TEXT("Renderer configuration is only supported in Editor builds."));
+#endif
+	return Result;
+}
+
+FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteRemoveEmitter(const TSharedRef<FJsonObject>& Params, FAgentFrameworkActionResult& Result)
+{
+#if WITH_EDITOR
+	FString SystemPath;
+	if (!Params->TryGetStringField(TEXT("system_path"), SystemPath) || SystemPath.IsEmpty())
+	{
+		if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("asset_path"), SystemPath, Result.Errors, true))
+		{
+			return Result;
+		}
+	}
+
+	FString EmitterName;
+	if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("emitter_name"), EmitterName, Result.Errors, true))
+	{
+		return Result;
+	}
+
+	UNiagaraSystem* System = LoadObject<UNiagaraSystem>(nullptr, *SystemPath);
+	if (!IsValid(System))
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Niagara System not found at %s"), *SystemPath));
+		return Result;
+	}
+
+	FNiagaraEmitterHandle* TargetHandle = nullptr;
+	for (FNiagaraEmitterHandle& Handle : System->GetEmitterHandles())
+	{
+		if (Handle.GetName().ToString() == EmitterName)
+		{
+			TargetHandle = &Handle;
+			break;
+		}
+	}
+
+	if (!TargetHandle)
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Emitter '%s' not found in system '%s'."), *EmitterName, *SystemPath));
+		return Result;
+	}
+
+	UNiagaraEmitter* TargetEmitter = TargetHandle->GetInstance().Emitter;
+
+	System->Modify();
+
+	FNiagaraExternalEditContext Context(System);
+	const FNiagaraExt_StackItemReference EmitterRef(System, FName(*EmitterName));
+	UNiagaraExternalEditUtilities::RemoveEmitter(EmitterRef, Context);
+
+	if (IsValid(TargetEmitter) && TargetEmitter->GetOuter() == System)
+	{
+		TargetEmitter->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional);
+		TargetEmitter->MarkAsGarbage();
+	}
+
+	UNiagaraSystemEditorData* SystemEditorData = Cast<UNiagaraSystemEditorData>(System->GetEditorData());
+	if (SystemEditorData)
+	{
+		SystemEditorData->SynchronizeOverviewGraphWithSystem(*System);
+	}
+
+	Result.bSuccess = WaitAndReportCompile(System, Result);
+	if (Result.bSuccess)
+	{
+		SaveAndDirtyAsset(System);
+	}
+	Result.ResultMessage = FString::Printf(TEXT("Successfully removed emitter '%s' from system '%s'."), *EmitterName, *SystemPath);
+	Result.ModifiedAssets.Add(SystemPath);
+#else
+	Result.Errors.Add(TEXT("Emitter removal is only supported in Editor builds."));
+#endif
+	return Result;
+}
+
+FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteRemoveModule(const TSharedRef<FJsonObject>& Params, FAgentFrameworkActionResult& Result)
+{
+#if WITH_EDITOR
+	FString SystemPath;
+	if (!Params->TryGetStringField(TEXT("system_path"), SystemPath) || SystemPath.IsEmpty())
+	{
+		if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("asset_path"), SystemPath, Result.Errors, true))
+		{
+			return Result;
+		}
+	}
+
+	FString EmitterName, Phase, ModuleType;
+	if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("phase"), Phase, Result.Errors, true) ||
+		!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("module_type"), ModuleType, Result.Errors, true))
+	{
+		return Result;
+	}
+
+	const bool bIsSystemPhase = (Phase == TEXT("SystemSpawn") || Phase == TEXT("SystemUpdate"));
+	if (!bIsSystemPhase)
+	{
+		if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("emitter_name"), EmitterName, Result.Errors, true))
+		{
+			return Result;
+		}
+	}
+
+	UNiagaraSystem* System = LoadObject<UNiagaraSystem>(nullptr, *SystemPath);
+	if (!IsValid(System))
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Niagara System not found at %s"), *SystemPath));
+		return Result;
+	}
+
+	UNiagaraGraph* Graph = nullptr;
+	UNiagaraNodeOutput* OutputNode = nullptr;
+	FString FindError;
+	if (!ResolvePhaseContext(System, EmitterName, Phase, Graph, OutputNode, FindError))
+	{
+		Result.Errors.Add(FindError);
+		return Result;
+	}
+
+	TArray<UNiagaraNodeFunctionCall*> StackNodes;
+	Graph->GetNodesOfClass<UNiagaraNodeFunctionCall>(StackNodes);
+
+	UNiagaraNodeFunctionCall* TargetNode = nullptr;
+	FString ModuleLeafName = FPackageName::GetShortName(ModuleType);
+
+	int32 TargetModuleIndex = INDEX_NONE;
+	Params->TryGetNumberField(TEXT("module_index"), TargetModuleIndex);
+
+	FString NodeGuidStr;
+	Params->TryGetStringField(TEXT("node_guid"), NodeGuidStr);
+
+	int32 MatchCount = 0;
+	for (UNiagaraNodeFunctionCall* Node : StackNodes)
+	{
+		if (!IsValid(Node)) continue;
+
+		if (!NodeGuidStr.IsEmpty() && Node->NodeGuid.ToString().Equals(NodeGuidStr, ESearchCase::IgnoreCase))
+		{
+			TargetNode = Node;
+			break;
+		}
+
+		bool bMatch = false;
+		if (Node->GetFunctionName().Equals(ModuleType, ESearchCase::IgnoreCase) ||
+			Node->GetFunctionName().Equals(ModuleLeafName, ESearchCase::IgnoreCase))
+		{
+			bMatch = true;
+		}
+		else if (Node->FunctionScript && (
+			Node->FunctionScript->GetName().Equals(ModuleType, ESearchCase::IgnoreCase) ||
+			Node->FunctionScript->GetName().Equals(ModuleLeafName, ESearchCase::IgnoreCase) ||
+			Node->FunctionScript->GetPathName().Contains(ModuleType)))
+		{
+			bMatch = true;
+		}
+
+		if (bMatch)
+		{
+			if (TargetModuleIndex == INDEX_NONE || TargetModuleIndex == MatchCount)
+			{
+				TargetNode = Node;
+				break;
+			}
+			MatchCount++;
+		}
+	}
+
+	if (!TargetNode)
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Module '%s' not found in phase '%s' on %s."),
+			*ModuleType, *Phase, bIsSystemPhase ? TEXT("System") : *EmitterName));
+		return Result;
+	}
+
+	System->Modify();
+	Graph->Modify();
+
+	const UEdGraphSchema_Niagara* Schema = Cast<UEdGraphSchema_Niagara>(TargetNode->GetSchema());
+	UEdGraphPin* ModuleInputPin = nullptr;
+	UEdGraphPin* ModuleOutputPin = nullptr;
+
+	for (UEdGraphPin* Pin : TargetNode->Pins)
+	{
+		if (!Pin) continue;
+		if (Schema && Schema->PinToTypeDefinition(Pin) == FNiagaraTypeDefinition::GetParameterMapDef())
+		{
+			if (Pin->Direction == EGPD_Input)
+			{
+				ModuleInputPin = Pin;
+			}
+			else if (Pin->Direction == EGPD_Output)
+			{
+				ModuleOutputPin = Pin;
+			}
+		}
+	}
+
+	TArray<UEdGraphPin*> PrevLinkedPins;
+	if (ModuleInputPin)
+	{
+		PrevLinkedPins = ModuleInputPin->LinkedTo;
+	}
+
+	TArray<UEdGraphPin*> NextLinkedPins;
+	if (ModuleOutputPin)
+	{
+		NextLinkedPins = ModuleOutputPin->LinkedTo;
+	}
+
+	// Break parameter map links on the node to remove
+	if (ModuleInputPin)
+	{
+		ModuleInputPin->BreakAllPinLinks();
+	}
+	if (ModuleOutputPin)
+	{
+		ModuleOutputPin->BreakAllPinLinks();
+	}
+
+	// Reconnect previous parameter map output directly to downstream input(s)
+	for (UEdGraphPin* PrevPin : PrevLinkedPins)
+	{
+		if (PrevPin)
+		{
+			for (UEdGraphPin* NextPin : NextLinkedPins)
+			{
+				if (NextPin)
+				{
+					PrevPin->MakeLinkTo(NextPin);
+				}
+			}
+		}
+	}
+
+	// Collect nodes directly feeding inputs into TargetNode (e.g. constant inputs, dynamic inputs)
+	TSet<UEdGraphNode*> FeedingNodes;
+	for (UEdGraphPin* Pin : TargetNode->Pins)
+	{
+		if (Pin && Pin->Direction == EGPD_Input && Pin != ModuleInputPin)
+		{
+			for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+			{
+				if (LinkedPin && LinkedPin->GetOwningNode())
+				{
+					FeedingNodes.Add(LinkedPin->GetOwningNode());
+				}
+			}
+		}
+	}
+
+	TargetNode->BreakAllNodeLinks();
+	Graph->RemoveNode(TargetNode);
+
+	for (UEdGraphNode* FeedingNode : FeedingNodes)
+	{
+		if (IsValid(FeedingNode))
+		{
+			bool bHasOtherOutputs = false;
+			for (UEdGraphPin* Pin : FeedingNode->Pins)
+			{
+				if (Pin && Pin->Direction == EGPD_Output && Pin->LinkedTo.Num() > 0)
+				{
+					bHasOtherOutputs = true;
+					break;
+				}
+			}
+			if (!bHasOtherOutputs)
+			{
+				FeedingNode->BreakAllNodeLinks();
+				Graph->RemoveNode(FeedingNode);
+			}
+		}
+	}
+
+	PruneOrphanedInputNodes(Graph);
+	Graph->NotifyGraphChanged();
+	Result.bSuccess = WaitAndReportCompile(System, Result);
+	if (Result.bSuccess)
+	{
+		SaveAndDirtyAsset(System);
+	}
+	Result.ResultMessage = FString::Printf(TEXT("Successfully removed module '%s' from phase '%s' on %s."),
+		*ModuleType, *Phase, bIsSystemPhase ? TEXT("System") : *EmitterName);
+	Result.ModifiedAssets.Add(SystemPath);
+#else
+	Result.Errors.Add(TEXT("Module removal is only supported in Editor builds."));
+#endif
+	return Result;
+}
+
 FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteListNiagaraParameters(const TSharedRef<FJsonObject>& Params, FAgentFrameworkActionResult& Result)
 {
 #if WITH_EDITOR
@@ -4358,6 +5111,40 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteListNiagaraPar
 							}
 						}
 						break;
+					}
+				}
+
+				// Also inspect static switch pins on FuncNode itself
+				for (UEdGraphPin* NodePin : FuncNode->Pins)
+				{
+					if (NodePin && NodePin->Direction == EGPD_Input && NodePin->PinType.PinSubCategoryObject.IsValid())
+					{
+						UEnum* EnumObj = Cast<UEnum>(NodePin->PinType.PinSubCategoryObject.Get());
+						if (EnumObj || NodePin->PinType.PinCategory == UEdGraphSchema_Niagara::PinCategoryType || NodePin->PinName.ToString().Contains(TEXT("Mode")))
+						{
+							TSharedRef<FJsonObject> SwitchObj = MakeShared<FJsonObject>();
+							SwitchObj->SetStringField(TEXT("name"), NodePin->PinName.ToString());
+							SwitchObj->SetStringField(TEXT("scope"), TEXT("StaticSwitch"));
+							SwitchObj->SetStringField(TEXT("emitter_name"), EmitterScopeName);
+							SwitchObj->SetStringField(TEXT("module_name"), ModName);
+							SwitchObj->SetStringField(TEXT("pin_name"), NodePin->PinName.ToString());
+							SwitchObj->SetStringField(TEXT("value"), NodePin->DefaultValue);
+							SwitchObj->SetBoolField(TEXT("is_static_switch"), true);
+							if (EnumObj)
+							{
+								SwitchObj->SetStringField(TEXT("type"), EnumObj->GetName());
+								int32 EnumIdx = EnumObj->GetIndexByNameString(NodePin->DefaultValue);
+								if (EnumIdx != INDEX_NONE)
+								{
+									SwitchObj->SetStringField(TEXT("display_value"), EnumObj->GetDisplayNameTextByIndex(EnumIdx).ToString());
+								}
+							}
+							else
+							{
+								SwitchObj->SetStringField(TEXT("type"), TEXT("StaticSwitch"));
+							}
+							ParamsJsonArray.Add(MakeShared<FJsonValueObject>(SwitchObj));
+						}
 					}
 				}
 			}

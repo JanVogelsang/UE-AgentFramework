@@ -137,6 +137,50 @@
         },
         "required": []
       }
+    },
+    {
+      "name": "execute_console_command",
+      "description": "Run an Unreal Engine console command targeting the active PIE world context (e.g. 'slomo 0.1', 'stat fps', 'FlushPersistentDebugLines').",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "Console command string to execute (e.g. 'slomo 0.1', 'stat unit')."
+          },
+          "world_context_index": {
+            "type": "integer",
+            "description": "Optional PIE world context index for multiplayer PIE (default: 0)."
+          }
+        },
+        "required": ["command"]
+      }
+    },
+    {
+      "name": "call_pie_actor_function",
+      "description": "Invoke a UFUNCTION by name on an actor in the active PIE world (e.g. triggering debug functions or gameplay events).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "actor_name": {
+            "type": "string",
+            "description": "Name or path of the actor in the PIE world."
+          },
+          "actor_label": {
+            "type": "string",
+            "description": "Editor label of the actor."
+          },
+          "function_name": {
+            "type": "string",
+            "description": "Name of the UFUNCTION to invoke on the actor."
+          },
+          "world_context_index": {
+            "type": "integer",
+            "description": "Optional PIE world context index (default: 0)."
+          }
+        },
+        "required": ["function_name"]
+      }
     }
   ]
 }

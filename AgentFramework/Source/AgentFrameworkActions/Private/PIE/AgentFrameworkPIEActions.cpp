@@ -53,7 +53,9 @@ TArray<FString> FAgentFrameworkPIEActions::GetSupportedToolNames() const
 		TEXT("trigger_ui_element"),
 		TEXT("query_world_state"),
 		TEXT("invoke_pie_widget_delegate"),
-		TEXT("get_active_runtime_widgets")
+		TEXT("get_active_runtime_widgets"),
+		TEXT("execute_console_command"),
+		TEXT("call_pie_actor_function")
 	};
 }
 
@@ -99,9 +101,13 @@ FAgentFrameworkActionResult FAgentFrameworkPIEActions::ExecuteAction(const TShar
 		ExecutedResult = ExecuteInvokePIEWidgetDelegate(Params, Result);
 	else if (Action == TEXT("get_active_runtime_widgets"))
 		ExecutedResult = ExecuteGetActiveRuntimeWidgets(Params, Result);
+	else if (Action == TEXT("execute_console_command"))
+		ExecutedResult = ExecuteConsoleCommand(Params, Result);
+	else if (Action == TEXT("call_pie_actor_function"))
+		ExecutedResult = ExecuteCallActorFunction(Params, Result);
 	else
 	{
-		Result.Errors.Add(TEXT("Unknown PIE action. Use start_pie_session, simulate_input, stop_pie_session, extract_ui_state, trigger_ui_element, query_world_state, invoke_pie_widget_delegate, or get_active_runtime_widgets."));
+		Result.Errors.Add(TEXT("Unknown PIE action. Use start_pie_session, simulate_input, stop_pie_session, extract_ui_state, trigger_ui_element, query_world_state, invoke_pie_widget_delegate, get_active_runtime_widgets, execute_console_command, or call_pie_actor_function."));
 		return Result;
 	}
 
@@ -1108,6 +1114,202 @@ FAgentFrameworkActionResult FAgentFrameworkPIEActions::ExecuteGetActiveRuntimeWi
 
 	Result.bSuccess = true;
 	Result.ResultMessage = ResponseString;
+	return Result;
+}
+
+// ============================================================================
+// execute_console_command
+// ============================================================================
+
+FAgentFrameworkActionResult FAgentFrameworkPIEActions::ExecuteConsoleCommand(
+	const TSharedRef<FJsonObject>& Params, FAgentFrameworkActionResult& Result)
+{
+	if (!IsPIERunning())
+	{
+		Result.Errors.Add(TEXT("PIE is not running."));
+		return Result;
+	}
+
+	FString Command;
+	if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("command"), Command, Result.Errors, true))
+	{
+		return Result;
+	}
+
+	int32 WorldContextIndex = 0;
+	Params->TryGetNumberField(TEXT("world_context_index"), WorldContextIndex);
+
+	UWorld* World = nullptr;
+	if (GEditor)
+	{
+		FWorldContext* PIEWorldContext = GEditor->GetPIEWorldContext(WorldContextIndex);
+		if (PIEWorldContext)
+		{
+			World = PIEWorldContext->World();
+		}
+		if (!World)
+		{
+			World = GEditor->GetCurrentPlayWorld();
+		}
+		if (!World)
+		{
+			World = GEditor->PlayWorld;
+		}
+	}
+
+	if (!World)
+	{
+		Result.Errors.Add(TEXT("Could not resolve active PIE world context."));
+		return Result;
+	}
+
+	bool bExecuted = false;
+	if (APlayerController* PC = World->GetFirstPlayerController())
+	{
+		PC->ConsoleCommand(Command, true);
+		bExecuted = true;
+	}
+	else if (GEngine)
+	{
+		GEngine->Exec(World, *Command);
+		bExecuted = true;
+	}
+
+	if (bExecuted)
+	{
+		Result.bSuccess = true;
+		Result.ResultMessage = FString::Printf(TEXT("Executed console command '%s' in PIE world '%s'."), *Command, *World->GetName());
+	}
+	else
+	{
+		Result.Errors.Add(TEXT("Failed to execute console command: no PlayerController or GEngine available in PIE world."));
+	}
+
+	return Result;
+}
+
+// ============================================================================
+// call_pie_actor_function
+// ============================================================================
+
+FAgentFrameworkActionResult FAgentFrameworkPIEActions::ExecuteCallActorFunction(
+	const TSharedRef<FJsonObject>& Params, FAgentFrameworkActionResult& Result)
+{
+	if (!IsPIERunning())
+	{
+		Result.Errors.Add(TEXT("PIE is not running."));
+		return Result;
+	}
+
+	FString ActorIdentifier;
+	if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("actor_name"), ActorIdentifier, Result.Errors, false) || ActorIdentifier.IsEmpty())
+	{
+		if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("actor_label"), ActorIdentifier, Result.Errors, false) || ActorIdentifier.IsEmpty())
+		{
+			Result.Errors.Add(TEXT("actor_name or actor_label is required."));
+			return Result;
+		}
+	}
+
+	FString FunctionName;
+	if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("function_name"), FunctionName, Result.Errors, true))
+	{
+		return Result;
+	}
+
+	int32 WorldContextIndex = 0;
+	Params->TryGetNumberField(TEXT("world_context_index"), WorldContextIndex);
+
+	UWorld* World = nullptr;
+	if (GEditor)
+	{
+		FWorldContext* PIEWorldContext = GEditor->GetPIEWorldContext(WorldContextIndex);
+		if (PIEWorldContext)
+		{
+			World = PIEWorldContext->World();
+		}
+		if (!World)
+		{
+			World = GEditor->GetCurrentPlayWorld();
+		}
+		if (!World)
+		{
+			World = GEditor->PlayWorld;
+		}
+	}
+
+	if (!World)
+	{
+		Result.Errors.Add(TEXT("Could not resolve active PIE world context."));
+		return Result;
+	}
+
+	AActor* TargetActor = nullptr;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		AActor* Actor = *It;
+		if (IsValid(Actor))
+		{
+			if (Actor->GetName().Equals(ActorIdentifier, ESearchCase::IgnoreCase) ||
+#if WITH_EDITOR
+				Actor->GetActorLabel().Equals(ActorIdentifier, ESearchCase::IgnoreCase) ||
+#endif
+				Actor->GetPathName().Contains(ActorIdentifier))
+			{
+				TargetActor = Actor;
+				break;
+			}
+		}
+	}
+
+	if (!TargetActor)
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Actor '%s' not found in active PIE world."), *ActorIdentifier));
+		return Result;
+	}
+
+	UFunction* Func = TargetActor->FindFunction(FName(*FunctionName));
+	if (!Func)
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Function '%s' not found on actor '%s' (%s)."),
+			*FunctionName, *TargetActor->GetName(), *TargetActor->GetClass()->GetName()));
+		return Result;
+	}
+
+	// Safe parameter allocation to prevent access violations if function expects parameters
+	if (Func->ParmsSize > 0)
+	{
+		uint8* Parms = (uint8*)FMemory_Alloca(Func->ParmsSize);
+		FMemory::Memzero(Parms, Func->ParmsSize);
+
+		for (TFieldIterator<FProperty> It(Func); It; ++It)
+		{
+			FProperty* Param = *It;
+			if (Param && Param->HasAnyPropertyFlags(CPF_Parm))
+			{
+				Param->InitializeValue_InContainer(Parms);
+			}
+		}
+
+		TargetActor->ProcessEvent(Func, Parms);
+
+		for (TFieldIterator<FProperty> It(Func); It; ++It)
+		{
+			FProperty* Param = *It;
+			if (Param && Param->HasAnyPropertyFlags(CPF_Parm))
+			{
+				Param->DestroyValue_InContainer(Parms);
+			}
+		}
+	}
+	else
+	{
+		TargetActor->ProcessEvent(Func, nullptr);
+	}
+
+	Result.bSuccess = true;
+	Result.ResultMessage = FString::Printf(TEXT("Successfully invoked function '%s' on actor '%s'."),
+		*FunctionName, *TargetActor->GetName());
 	return Result;
 }
 

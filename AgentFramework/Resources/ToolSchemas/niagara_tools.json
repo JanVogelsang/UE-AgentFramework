@@ -168,6 +168,10 @@
           "curve_keys": {
             "type": ["array", "object"],
             "description": "For curve data interfaces (NiagaraDataInterfaceCurve, NiagaraDataInterfaceColorCurve, etc.): an array of {time, value} objects for single-channel curves, or an object mapping channel names (e.g. 'Red', 'Green', 'Blue', 'Alpha') to arrays of {time, value} objects for multi-channel curves."
+          },
+          "dynamic_input": {
+            "type": "string",
+            "description": "Niagara dynamic input script expression to attach to this pin (e.g. 'Multiply_Int', 'Multiply_Float', 'VectorFromFloat', or an arbitrary Niagara dynamic input script asset path). Either 'value', 'link_parameter', 'asset_path', 'interface_class', 'properties', 'curve_keys', or 'dynamic_input' must be provided."
           }
         },
         "required": ["system_path", "phase", "module_type", "pin_name"]
@@ -452,6 +456,119 @@
           }
         },
         "required": ["system_path", "emitter_name", "renderer_type"]
+      }
+    },
+    {
+      "name": "edit_niagara_renderer",
+      "description": "Modify an existing renderer on an emitter within a Niagara System, such as enabling/disabling it or updating its properties (material, mesh, alignment, etc.).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "system_path": {
+            "type": "string",
+            "description": "Content path of the target Niagara System"
+          },
+          "emitter_name": {
+            "type": "string",
+            "description": "Name of the emitter inside the system containing the renderer"
+          },
+          "renderer_index": {
+            "type": "integer",
+            "description": "0-based index of the renderer to edit in the emitter's renderers list."
+          },
+          "renderer_type": {
+            "type": "string",
+            "description": "Renderer class or type name to edit (e.g. 'Sprite', 'Mesh', 'Ribbon', 'Light'). Used if renderer_index is omitted."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable or disable this renderer."
+          },
+          "properties": {
+            "type": "object",
+            "description": "Map of property names and values to configure on the renderer instance."
+          }
+        },
+        "required": ["system_path", "emitter_name"]
+      }
+    },
+    {
+      "name": "remove_niagara_renderer",
+      "description": "Remove a renderer from an emitter within a Niagara System.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "system_path": {
+            "type": "string",
+            "description": "Content path of the target Niagara System"
+          },
+          "emitter_name": {
+            "type": "string",
+            "description": "Name of the emitter inside the system"
+          },
+          "renderer_index": {
+            "type": "integer",
+            "description": "0-based index of the renderer to remove."
+          },
+          "renderer_type": {
+            "type": "string",
+            "description": "Renderer class or type name to remove (e.g. 'Sprite', 'Mesh'). Used if renderer_index is omitted."
+          }
+        },
+        "required": ["system_path", "emitter_name"]
+      }
+    },
+    {
+      "name": "remove_niagara_emitter",
+      "description": "Remove an emitter from an existing Niagara System.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "system_path": {
+            "type": "string",
+            "description": "Content path of the target Niagara System"
+          },
+          "emitter_name": {
+            "type": "string",
+            "description": "Name of the emitter to remove from the system"
+          }
+        },
+        "required": ["system_path", "emitter_name"]
+      }
+    },
+    {
+      "name": "remove_niagara_module",
+      "description": "Remove a module from a specific execution phase of an emitter or system stack graph.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "system_path": {
+            "type": "string",
+            "description": "Content path of the target Niagara System"
+          },
+          "emitter_name": {
+            "type": "string",
+            "description": "Name of the emitter inside the system. Required for emitter phases, omitted for system phases."
+          },
+          "phase": {
+            "type": "string",
+            "enum": ["EmitterSpawn", "EmitterUpdate", "ParticleSpawn", "ParticleUpdate", "ParticleEvent", "SystemSpawn", "SystemUpdate"],
+            "description": "The execution phase containing the module"
+          },
+          "module_type": {
+            "type": "string",
+            "description": "The name or type of the module to remove (e.g. 'AddVelocity', 'GravityForce')"
+          },
+          "module_index": {
+            "type": "integer",
+            "description": "Optional 0-based index if multiple modules of the same type exist in the phase stack."
+          },
+          "node_guid": {
+            "type": "string",
+            "description": "Optional node GUID string to uniquely target a specific module node."
+          }
+        },
+        "required": ["system_path", "phase", "module_type"]
       }
     },
     {

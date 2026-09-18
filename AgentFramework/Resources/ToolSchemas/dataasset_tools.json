@@ -118,6 +118,20 @@
         },
         "required": ["asset_path"]
       }
+    },
+    {
+      "name": "save_asset",
+      "description": "Explicitly save an asset package to disk (e.g. saving modified materials, textures, Niagara systems, or data assets). Silently saves headless without modal prompts.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "asset_path": {
+            "type": "string",
+            "description": "Full path of the asset or package to save (e.g. '/Game/VFX/NS_Tau' or '/Game/Materials/M_Base')."
+          }
+        },
+        "required": ["asset_path"]
+      }
     }
   ]
 }

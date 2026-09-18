@@ -19,6 +19,7 @@
 #include "PhysicsField/PhysicsFieldComponent.h"
 #include "EngineUtils.h"
 #include "UObject/SavePackage.h"
+#include "Materials/MaterialInterface.h"
 
 
 #if WITH_EDITOR
@@ -333,9 +334,60 @@ FAgentFrameworkActionResult FAgentFrameworkMeshActions::ExecuteConfigureStaticMe
 		StaticMesh->SetLightMapResolution(LightmapResolution);
 	}
 
+	// Material Slot Assignment
+	const TArray<TSharedPtr<FJsonValue>>* MaterialsArray = nullptr;
+	if (UAgentFrameworkActionUtils::TryGetArrayParam(Params, TEXT("materials"), MaterialsArray, Result.Errors, false) && MaterialsArray)
+	{
+		for (int32 SlotIndex = 0; SlotIndex < MaterialsArray->Num(); ++SlotIndex)
+		{
+			const TSharedPtr<FJsonValue>& MatVal = (*MaterialsArray)[SlotIndex];
+			if (!MatVal.IsValid()) continue;
+			FString MatPath = MatVal->AsString();
+			if (!MatPath.IsEmpty())
+			{
+				UMaterialInterface* Material = LoadObject<UMaterialInterface>(nullptr, *MatPath);
+				if (IsValid(Material))
+				{
+					StaticMesh->SetMaterial(SlotIndex, Material);
+				}
+				else
+				{
+					Result.Warnings.Add(FString::Printf(TEXT("Material at slot %d not found: %s"), SlotIndex, *MatPath));
+				}
+			}
+		}
+	}
+
+	FString SingleMaterial;
+	if (UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("material"), SingleMaterial, Result.Errors, false) && !SingleMaterial.IsEmpty())
+	{
+		UMaterialInterface* Material = LoadObject<UMaterialInterface>(nullptr, *SingleMaterial);
+		if (IsValid(Material))
+		{
+			StaticMesh->SetMaterial(0, Material);
+		}
+		else
+		{
+			Result.Warnings.Add(FString::Printf(TEXT("Material not found: %s"), *SingleMaterial));
+		}
+	}
+
 	// Mark package as dirty and rebuild the static mesh
 	StaticMesh->Modify();
 	StaticMesh->PostEditChange();
+
+	UPackage* Package = StaticMesh->GetOutermost();
+	if (IsValid(Package))
+	{
+		Package->MarkPackageDirty();
+		FString PackageFilename;
+		if (FPackageName::TryConvertLongPackageNameToFilename(Package->GetName(), PackageFilename, FPackageName::GetAssetPackageExtension()))
+		{
+			FSavePackageArgs SaveArgs;
+			SaveArgs.TopLevelFlags = RF_Standalone;
+			UPackage::SavePackage(Package, StaticMesh, *PackageFilename, SaveArgs);
+		}
+	}
 
 	Result.bSuccess = true;
 	Result.ModifiedAssets.Add(AssetPath);

@@ -14,6 +14,8 @@
 #include "IImageWrapperModule.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Engine/GameViewportClient.h"
+#include "Engine/World.h"
 
 #define LOCTEXT_NAMESPACE "AgentFrameworkViewportActions"
 
@@ -157,17 +159,34 @@ FAgentFrameworkActionResult FAgentFrameworkViewportActions::ExecuteCaptureViewpo
 	int32 ViewportIndex = 0;
 	UAgentFrameworkActionUtils::TryGetIntParam(Params, TEXT("viewport_index"), ViewportIndex, Result.Errors, false);
 
-	TSharedPtr<SLevelViewport> ActiveViewport = GetActiveLevelViewport(Result.Errors);
-	if (!ActiveViewport.IsValid())
+	FViewport* Viewport = nullptr;
+	if (GEditor && GEditor->PlayWorld)
 	{
-		return Result;
+		UWorld* PlayWorld = GEditor->GetCurrentPlayWorld();
+		if (!PlayWorld)
+		{
+			PlayWorld = GEditor->PlayWorld;
+		}
+		if (PlayWorld && PlayWorld->GetGameViewport() && PlayWorld->GetGameViewport()->Viewport)
+		{
+			Viewport = PlayWorld->GetGameViewport()->Viewport;
+		}
 	}
 
-	FViewport* Viewport = ActiveViewport->GetActiveViewport();
 	if (!Viewport)
 	{
-		Result.Errors.Add(TEXT("Could not get FViewport from the active Level Viewport."));
-		return Result;
+		TSharedPtr<SLevelViewport> ActiveViewport = GetActiveLevelViewport(Result.Errors);
+		if (!ActiveViewport.IsValid())
+		{
+			return Result;
+		}
+
+		Viewport = ActiveViewport->GetActiveViewport();
+		if (!Viewport)
+		{
+			Result.Errors.Add(TEXT("Could not get FViewport from the active Level Viewport."));
+			return Result;
+		}
 	}
 
 	int32 Width = Viewport->GetSizeXY().X;

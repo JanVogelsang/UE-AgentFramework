@@ -13,15 +13,31 @@
             "type": "string",
             "description": "Content path, e.g. /Game/Materials/M_Ground"
           },
+          "blend_mode": {
+            "type": "string",
+            "description": "Material blend mode: BLEND_Opaque, BLEND_Masked, BLEND_Translucent, BLEND_Additive, BLEND_Modulate."
+          },
+          "shading_model": {
+            "type": "string",
+            "description": "Material shading model: MSM_DefaultLit, MSM_Unlit, MSM_Subsurface."
+          },
           "expressions": {
             "type": "array",
             "description": "Material expressions to add",
             "items": {
               "type": "object",
               "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Identifier for this node used in connections"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Alias for id"
+                },
                 "type": {
                   "type": "string",
-                  "description": "Expression type: TextureSample, Constant, Constant3Vector, Color, Multiply, Lerp, LinearInterpolate, ScalarParameter, VectorParameter, TextureCoordinate"
+                  "description": "Expression type: TextureSample, Constant, Constant3Vector, Color, Multiply, Lerp, LinearInterpolate, ScalarParameter, VectorParameter, TextureCoordinate, ParticleColor, or any UMaterialExpression subclass name"
                 },
                 "x": {
                   "type": "integer",
@@ -33,7 +49,10 @@
                 },
                 "value": {
                   "type": "number",
-                  "description": "Value for Constant expressions"
+                  "description": "Value for Constant or ScalarParameter expressions"
+                },
+                "default_value": {
+                  "description": "Default value for ScalarParameter (number) or VectorParameter / Constant3Vector (array of [R,G,B,A])"
                 },
                 "parameter_name": {
                   "type": "string",
@@ -42,11 +61,45 @@
                 "connect_to": {
                   "type": "string",
                   "description": "Material property to connect to: BaseColor, Metallic, Specular, Roughness, EmissiveColor, Normal, Opacity, OpacityMask"
+                },
+                "output_name": {
+                  "type": "string",
+                  "description": "Output pin name on this expression (e.g. 'Alpha' or 'Color' for ParticleColor)"
                 }
               },
               "required": [
                 "type"
               ]
+            }
+          },
+          "connections": {
+            "type": "array",
+            "description": "Optional list of connections between expressions or to material properties",
+            "items": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "type": "string",
+                  "description": "ID, name, or type of source expression"
+                },
+                "from_output": {
+                  "type": "string",
+                  "description": "Output pin name on source expression"
+                },
+                "to": {
+                  "type": "string",
+                  "description": "ID, name, or type of target expression"
+                },
+                "to_input": {
+                  "type": "string",
+                  "description": "Input pin name on target expression"
+                },
+                "to_property": {
+                  "type": "string",
+                  "description": "Target material property (e.g. BaseColor, EmissiveColor, Opacity)"
+                }
+              },
+              "required": ["from"]
             }
           }
         },

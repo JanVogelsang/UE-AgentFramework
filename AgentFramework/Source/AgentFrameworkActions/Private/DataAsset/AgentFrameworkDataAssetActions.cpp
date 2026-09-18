@@ -16,7 +16,12 @@
 #if WITH_EDITOR
 #include "Editor.h"
 #include "Sound/SoundBase.h"
+#include "FileHelpers.h"
 #endif
+
+#include "HAL/FileManager.h"
+#include "Misc/PackageName.h"
+#include "UObject/SavePackage.h"
 
 #define LOCTEXT_NAMESPACE "AgentFrameworkDataAssetActions"
 
@@ -75,7 +80,8 @@ TArray<FString> FAgentFrameworkDataAssetActions::GetSupportedToolNames() const
 		TEXT("set_data_asset_properties"),
 		TEXT("set_uobject_properties"),
 		TEXT("add_instanced_subobject"),
-		TEXT("get_data_asset_info")
+		TEXT("get_data_asset_info"),
+		TEXT("save_asset")
 	};
 }
 
@@ -111,6 +117,10 @@ FAgentFrameworkActionResult FAgentFrameworkDataAssetActions::ExecuteAction(const
 	else if (Action == TEXT("get_data_asset_info"))
 	{
 		Result = ExecuteGetDataAssetInfo(Params, Result);
+	}
+	else if (Action == TEXT("save_asset"))
+	{
+		Result = ExecuteSaveAsset(Params, Result);
 	}
 	else
 	{
@@ -505,6 +515,83 @@ FAgentFrameworkActionResult FAgentFrameworkDataAssetActions::ExecuteGetDataAsset
 
 	Result.bSuccess = true;
 	Result.ResultMessage = ResponseString;
+	return Result;
+}
+
+// ============================================================================
+// save_asset
+// ============================================================================
+
+FAgentFrameworkActionResult FAgentFrameworkDataAssetActions::ExecuteSaveAsset(
+	const TSharedRef<FJsonObject>& Params, FAgentFrameworkActionResult& Result)
+{
+	FString AssetPath;
+	if (!UAgentFrameworkActionUtils::TryGetStringParam(Params, TEXT("asset_path"), AssetPath, Result.Errors, true))
+	{
+		return Result;
+	}
+
+	// Normalize package path: strip sub-object or class syntax e.g. /Game/Foo/Bar.Bar -> /Game/Foo/Bar
+	FString PackageName = AssetPath;
+	int32 DotIndex = INDEX_NONE;
+	if (PackageName.FindChar(TEXT('.'), DotIndex))
+	{
+		PackageName = PackageName.Left(DotIndex);
+	}
+
+	UPackage* Package = FindPackage(nullptr, *PackageName);
+	if (!Package)
+	{
+		Package = LoadPackage(nullptr, *PackageName, LOAD_None);
+	}
+
+	if (!Package)
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Could not find or load package for asset path: %s"), *AssetPath));
+		return Result;
+	}
+
+	FString PackageFilename;
+	if (FPackageName::DoesPackageExist(PackageName, &PackageFilename))
+	{
+		if (IFileManager::Get().IsReadOnly(*PackageFilename))
+		{
+			Result.Errors.Add(FString::Printf(TEXT("Package file on disk is read-only: %s"), *PackageFilename));
+			return Result;
+		}
+	}
+
+	Package->MarkPackageDirty();
+
+	bool bSaved = false;
+#if WITH_EDITOR
+	TArray<UPackage*> PackagesToSave;
+	PackagesToSave.Add(Package);
+	bSaved = UEditorLoadingAndSavingUtils::SavePackages(PackagesToSave, false);
+#endif
+
+	if (!bSaved)
+	{
+		FSavePackageArgs SaveArgs;
+		SaveArgs.TopLevelFlags = RF_Standalone;
+		if (PackageFilename.IsEmpty())
+		{
+			PackageFilename = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
+		}
+		UObject* MainAsset = Package->FindAssetInPackage();
+		bSaved = UPackage::SavePackage(Package, MainAsset, *PackageFilename, SaveArgs);
+	}
+
+	if (bSaved)
+	{
+		Result.bSuccess = true;
+		Result.ResultMessage = FString::Printf(TEXT("Successfully saved asset package: %s"), *PackageName);
+	}
+	else
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Failed to save asset package: %s"), *PackageName));
+	}
+
 	return Result;
 }
 

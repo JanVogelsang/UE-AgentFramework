@@ -82,6 +82,17 @@
           "lightmap_resolution": {
             "type": "integer",
             "description": "Lightmap UV resolution in texels (power of 2: 64, 128, 256, 512, 1024). Higher = better quality baked lighting but more memory."
+          },
+          "materials": {
+            "type": "array",
+            "description": "Optional array of material asset paths to assign to the mesh slots in order (e.g. ['/Game/Materials/M_Base', '/Game/Materials/M_Trim']).",
+            "items": {
+              "type": "string"
+            }
+          },
+          "material": {
+            "type": "string",
+            "description": "Optional single material asset path to assign to slot 0."
           }
         },
         "required": ["asset_path"]
