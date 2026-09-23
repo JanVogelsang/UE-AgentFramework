@@ -56,6 +56,21 @@
 #include "Misc/PackageName.h"
 #include "UObject/SavePackage.h"
 #include "Sound/SoundBase.h"
+
+// MarkAsGarbage asserts !IsRooted(). An object this plugin detaches from an asset can still be rooted by the editor -
+// an emitter removed with remove_niagara_emitter was, on 2026-09-23 - and the failed assert takes the editor down.
+// Moving the object to the transient package is what keeps it out of the saved asset; the GC reclaims it once it is
+// no longer rooted or referenced. Returns false when the object was left to the GC.
+static bool MarkAsGarbageUnlessRooted(UObject* Object)
+{
+	if (!IsValid(Object) || Object->IsRooted())
+	{
+		return false;
+	}
+	Object->MarkAsGarbage();
+	return true;
+}
+
 namespace
 {
 	FString NiagaraFormatJsonObjectToUnrealText(const TSharedPtr<FJsonObject>& Obj);
@@ -217,7 +232,7 @@ namespace
 			// Removing the handle leaves the emitter object outered to the system, and the next save would write it
 			// into the package as an orphan. Move it out so it is neither saved nor found by name again.
 			ThrowawayEmitter->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional);
-			ThrowawayEmitter->MarkAsGarbage();
+			MarkAsGarbageUnlessRooted(ThrowawayEmitter);
 		}
 		if (Context.HasErrors() || System.GetEmitterHandles().Num() != NumHandlesBefore)
 		{
@@ -1254,6 +1269,8 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteAddModule(cons
 }
 
 #if WITH_EDITOR
+static void RemoveOverridePinsAliasedTo(UNiagaraNodeFunctionCall* FunctionCallNode);
+
 static void CleanOverridePinConnectedNodes(UEdGraphPin* Pin)
 {
 	if (!Pin || Pin->LinkedTo.Num() == 0) return;
@@ -1286,6 +1303,12 @@ static void CleanOverridePinConnectedNodes(UEdGraphPin* Pin)
 
 			if (bOnlyUsedByThisPin)
 			{
+				if (UNiagaraNodeFunctionCall* RemovedFunction = Cast<UNiagaraNodeFunctionCall>(ConnectedNode))
+				{
+					// A dynamic input's inputs are overrides on the node feeding its parameter map; they go with it. This
+					// must run before the links are broken, because the links are how that node is found.
+					RemoveOverridePinsAliasedTo(RemovedFunction);
+				}
 				ConnectedNode->BreakAllNodeLinks();
 				if (UEdGraph* Graph = ConnectedNode->GetGraph())
 				{
@@ -1295,6 +1318,63 @@ static void CleanOverridePinConnectedNodes(UEdGraphPin* Pin)
 		}
 	}
 	Pin->BreakAllPinLinks(true);
+}
+
+// The ParameterMapSet node a stack function call reads its input overrides from: whatever feeds its parameter map input.
+// Mirrors FNiagaraStackGraphUtilities::GetStackFunctionOverrideNode, which is not exported.
+static UEdGraphNode* FindStackOverrideNode(UNiagaraNodeFunctionCall* FunctionCallNode)
+{
+	if (!FunctionCallNode)
+	{
+		return nullptr;
+	}
+	for (UEdGraphPin* Pin : FunctionCallNode->Pins)
+	{
+		if (Pin && Pin->Direction == EGPD_Input && UEdGraphSchema_Niagara::PinToTypeDefinition(Pin) == FNiagaraTypeDefinition::GetParameterMapDef())
+		{
+			return (Pin->LinkedTo.Num() == 1 && Pin->LinkedTo[0]) ? Pin->LinkedTo[0]->GetOwningNode() : nullptr;
+		}
+	}
+	return nullptr;
+}
+
+// Removes a stack function call's input overrides - the "<FunctionName>.<Input>" pins on its override node - together with
+// whatever feeds them, recursively. The stack editor does this in FNiagaraStackGraphUtilities::
+// RemoveNodesForStackFunctionInputOverridePin, which is not exported. A dynamic input's override node sits in the
+// module's parameter map chain and is shared with sibling dynamic inputs, so it stays compiled after the dynamic input
+// itself is gone; overrides left on it were read by the next dynamic input that got the same node name. On 2026-09-23
+// a leftover "FloatFromCurve.Float Curve" compiled next to the real "FloatFromCurve.FloatCurve" into one HLSL symbol
+// ("redefinition of Emitter_FloatFromCurve_FloatCurve_MinTime"). The emptied override node is left in the chain as a
+// pass-through, which compiles to nothing.
+static void RemoveOverridePinsAliasedTo(UNiagaraNodeFunctionCall* FunctionCallNode)
+{
+	UEdGraphNode* OverrideNode = FindStackOverrideNode(FunctionCallNode);
+	// UNiagaraNodeParameterMapSet's header is private to NiagaraEditor, so the override node is recognised by class name.
+	if (!OverrideNode || OverrideNode->GetClass()->GetName() != TEXT("NiagaraNodeParameterMapSet"))
+	{
+		return;
+	}
+	const FString Prefix = FunctionCallNode->GetFunctionName() + TEXT(".");
+	TArray<UEdGraphPin*> Aliased;
+	for (UEdGraphPin* OverridePin : OverrideNode->Pins)
+	{
+		if (OverridePin && OverridePin->Direction == EGPD_Input && OverridePin->PinName.ToString().StartsWith(Prefix, ESearchCase::CaseSensitive))
+		{
+			Aliased.Add(OverridePin);
+		}
+	}
+	for (UEdGraphPin* OverridePin : Aliased)
+	{
+		CleanOverridePinConnectedNodes(OverridePin);
+		OverrideNode->RemovePin(OverridePin);
+	}
+	if (Aliased.Num() > 0)
+	{
+		if (UNiagaraNode* NiagaraOverrideNode = Cast<UNiagaraNode>(OverrideNode))
+		{
+			NiagaraOverrideNode->MarkNodeRequiresSynchronization(TEXT("Removed the overrides of a removed dynamic input"), true);
+		}
+	}
 }
 
 static UEdGraphPin* FindStackOverridePin(UNiagaraNodeFunctionCall* FunctionCallNode, const FNiagaraParameterHandle& AliasedHandle)
@@ -1386,7 +1466,8 @@ static UClass* ResolveDataInterfaceClass(const FString& InClassName)
 		CleanClassName = CleanClassName.RightChop(1);
 	}
 
-	UClass* DIClass = LoadObject<UClass>(nullptr, *InClassName);
+	// LoadObject on an unqualified name fails with a logged "Failed to find object" warning, so only try it for a path.
+	UClass* DIClass = InClassName.Contains(TEXT("/")) ? LoadObject<UClass>(nullptr, *InClassName) : nullptr;
 	if (!IsValid(DIClass))
 	{
 		DIClass = LoadObject<UClass>(nullptr, *FString::Printf(TEXT("/Script/Niagara.%s"), *CleanClassName));
@@ -1449,6 +1530,166 @@ static TSharedPtr<FJsonValue> SerializeCurveKeysToJson(UNiagaraDataInterfaceCurv
 		ChannelsObj->SetArrayField(CD.Name.ToString(), KeysArray);
 	}
 	return MakeShared<FJsonValueObject>(ChannelsObj);
+}
+
+// Reads up to Keys.Num() numeric components from a JSON value into Out (pre-filled with Defaults). The MCP client hands
+// nested objects and arrays over as strings, so a string that looks like JSON is parsed as JSON; Unreal's own
+// "(X=1,Y=2,Z=3)" / "X=1 Y=2 Z=3" text, "1,2,3" and a single broadcast scalar are accepted too. Anything else is an
+// error. It used to be split on commas and Atof'd, which turned {"x":0,"y":0,"z":1} into (0,0,0) and reported
+// success (2026-09-23, User.BattlePlaneNormal).
+static bool ParseNumericComponents(const TSharedPtr<FJsonValue>& Value, const TArray<FString>& Keys, const TArray<double>& Defaults, const int32 MinCount, TArray<double>& Out, FString& OutError)
+{
+	Out = Defaults;
+	if (!Value.IsValid())
+	{
+		OutError = TEXT("no value was given");
+		return false;
+	}
+
+	auto ReadNumber = [](const TSharedPtr<FJsonValue>& Element, double& OutNumber)
+	{
+		if (!Element.IsValid())
+		{
+			return false;
+		}
+		if (Element->Type == EJson::Number)
+		{
+			OutNumber = Element->AsNumber();
+			return true;
+		}
+		return Element->Type == EJson::String && LexTryParseString(OutNumber, *Element->AsString().TrimStartAndEnd());
+	};
+
+	switch (Value->Type)
+	{
+	case EJson::Number:
+		for (int32 Index = 0; Index < MinCount; ++Index)
+		{
+			Out[Index] = Value->AsNumber();
+		}
+		return true;
+
+	case EJson::Array:
+	{
+		const TArray<TSharedPtr<FJsonValue>>& Elements = Value->AsArray();
+		if (Elements.Num() < MinCount || Elements.Num() > Keys.Num())
+		{
+			OutError = FString::Printf(TEXT("expected %d to %d numbers, got %d"), MinCount, Keys.Num(), Elements.Num());
+			return false;
+		}
+		for (int32 Index = 0; Index < Elements.Num(); ++Index)
+		{
+			if (!ReadNumber(Elements[Index], Out[Index]))
+			{
+				OutError = FString::Printf(TEXT("element %d is not a number"), Index);
+				return false;
+			}
+		}
+		return true;
+	}
+
+	case EJson::Object:
+	{
+		const TSharedPtr<FJsonObject> Object = Value->AsObject();
+		int32 NumFound = 0;
+		for (int32 Index = 0; Index < Keys.Num(); ++Index)
+		{
+			TSharedPtr<FJsonValue> Field = Object->TryGetField(Keys[Index]);
+			if (!Field.IsValid())
+			{
+				Field = Object->TryGetField(Keys[Index].ToUpper());
+			}
+			if (!Field.IsValid())
+			{
+				continue;
+			}
+			if (!ReadNumber(Field, Out[Index]))
+			{
+				OutError = FString::Printf(TEXT("field '%s' is not a number"), *Keys[Index]);
+				return false;
+			}
+			++NumFound;
+		}
+		if (NumFound == 0)
+		{
+			OutError = FString::Printf(TEXT("the object has none of the fields %s"), *FString::Join(Keys, TEXT(", ")));
+			return false;
+		}
+		return true;
+	}
+
+	case EJson::String:
+	{
+		FString Text = Value->AsString().TrimStartAndEnd();
+		if (Text.StartsWith(TEXT("{")) || Text.StartsWith(TEXT("[")))
+		{
+			TSharedPtr<FJsonValue> Parsed;
+			const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Text);
+			if (!FJsonSerializer::Deserialize(Reader, Parsed) || !Parsed.IsValid() || Parsed->Type == EJson::String)
+			{
+				OutError = FString::Printf(TEXT("'%s' looks like JSON but does not parse as an object or array"), *Text);
+				return false;
+			}
+			return ParseNumericComponents(Parsed, Keys, Defaults, MinCount, Out, OutError);
+		}
+
+		if (Text.StartsWith(TEXT("(")) && Text.EndsWith(TEXT(")")))
+		{
+			Text = Text.Mid(1, Text.Len() - 2);
+		}
+		const TCHAR* Delimiters[] = {TEXT(","), TEXT(" ")};
+		TArray<FString> Parts;
+		Text.ParseIntoArray(Parts, Delimiters, UE_ARRAY_COUNT(Delimiters), true);
+		if (Parts.Num() == 0)
+		{
+			OutError = TEXT("the string is empty");
+			return false;
+		}
+
+		if (Text.Contains(TEXT("=")))
+		{
+			const TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+			for (const FString& Part : Parts)
+			{
+				FString Key, Number;
+				if (!Part.Split(TEXT("="), &Key, &Number))
+				{
+					OutError = FString::Printf(TEXT("'%s' is not a Key=Value pair"), *Part);
+					return false;
+				}
+				Object->SetStringField(Key.TrimStartAndEnd().ToLower(), Number.TrimStartAndEnd());
+			}
+			return ParseNumericComponents(MakeShared<FJsonValueObject>(Object), Keys, Defaults, MinCount, Out, OutError);
+		}
+
+		if (Parts.Num() == 1)
+		{
+			// A single number broadcasts, as it always has.
+			double Scalar = 0.0;
+			if (!LexTryParseString(Scalar, *Parts[0]))
+			{
+				OutError = FString::Printf(TEXT("'%s' is not a number"), *Parts[0]);
+				return false;
+			}
+			for (int32 Index = 0; Index < MinCount; ++Index)
+			{
+				Out[Index] = Scalar;
+			}
+			return true;
+		}
+
+		TArray<TSharedPtr<FJsonValue>> Numbers;
+		for (const FString& Part : Parts)
+		{
+			Numbers.Add(MakeShared<FJsonValueString>(Part));
+		}
+		return ParseNumericComponents(MakeShared<FJsonValueArray>(Numbers), Keys, Defaults, MinCount, Out, OutError);
+	}
+
+	default:
+		OutError = TEXT("expected a number, an array, an object or a string");
+		return false;
+	}
 }
 
 static bool ApplyCurveKeysFromJson(
@@ -1888,6 +2129,85 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteSetModulePin(c
 	// 3. Locate or create stack override pin on the preceding parameter map set node
 	if (!TargetPin)
 	{
+		// Resolve the name the input really has before building the override handle, because every override below is
+		// keyed by it. An override written under a name the function never reads compiles, reads back through
+		// list_niagara_parameters and reports success - and does nothing. On 2026-09-23 "Float Curve" on FloatFromCurve
+		// (whose input is FloatCurve) produced exactly that: a curve that read back perfectly and sampled 0 in game.
+		// Callers use display names ("Float Curve") as readily as variable names, so compare without spaces; and when
+		// the function's graph is available but nothing matches, fail instead of falling through to the type
+		// deduction fallbacks, which would invent the pin.
+		if (CalledGraph)
+		{
+			const FString Wanted = BarePinName.Replace(TEXT(" "), TEXT(""));
+			auto Matches = [&Wanted](const FString& Candidate)
+			{
+				return Candidate.Replace(TEXT(" "), TEXT("")).Equals(Wanted, ESearchCase::IgnoreCase);
+			};
+
+			TArray<FString> KnownInputs;
+			FString CanonicalName;
+			bool bMatchedOtherwise = false;
+			auto Consider = [&](const FName& VarName, const TArray<FName>* AlternateAliases)
+			{
+				const FString FullName = VarName.ToString();
+				const FString BaseName = FNiagaraParameterHandle(VarName).GetName().ToString();
+				if (BaseName.IsEmpty())
+				{
+					return;
+				}
+				KnownInputs.AddUnique(BaseName);
+				if (CanonicalName.IsEmpty() && Matches(BaseName))
+				{
+					CanonicalName = BaseName;
+				}
+				if (Matches(FullName) || FullName.EndsWith(FString::Printf(TEXT(".%s"), *BarePinName), ESearchCase::IgnoreCase))
+				{
+					bMatchedOtherwise = true;
+				}
+				if (AlternateAliases)
+				{
+					for (const FName& Alias : *AlternateAliases)
+					{
+						if (Matches(Alias.ToString()))
+						{
+							bMatchedOtherwise = true;
+						}
+					}
+				}
+			};
+
+			for (const auto& Pair : CalledGraph->GetAllMetaData())
+			{
+				Consider(Pair.Key.GetName(), Pair.Value ? &Pair.Value->Metadata.AlternateAliases : nullptr);
+			}
+			for (UEdGraphNode* Node : CalledGraph->Nodes)
+			{
+				if (const UNiagaraNodeInput* NodeInput = Cast<UNiagaraNodeInput>(Node))
+				{
+					if (NodeInput->Usage == ENiagaraInputNodeUsage::Parameter)
+					{
+						Consider(NodeInput->Input.GetName(), nullptr);
+					}
+				}
+			}
+			for (const FNiagaraVariable& SwitchVar : CalledGraph->FindStaticSwitchInputs())
+			{
+				Consider(SwitchVar.GetName(), nullptr);
+			}
+
+			if (!CanonicalName.IsEmpty())
+			{
+				BarePinName = CanonicalName;
+			}
+			else if (!bMatchedOtherwise)
+			{
+				KnownInputs.Sort();
+				Result.Errors.Add(FString::Printf(TEXT("Input '%s' does not exist on '%s' in phase '%s', so nothing would read an override written under that name. Its inputs are: %s"),
+					*PinName, *TargetNode->GetFunctionName(), *Phase, *FString::Join(KnownInputs, TEXT(", "))));
+				return Result;
+			}
+		}
+
 		FNiagaraParameterHandle ModuleParamHandle = FNiagaraParameterHandle::CreateModuleParameterHandle(FName(*BarePinName));
 		FNiagaraParameterHandle AliasedHandle = FNiagaraParameterHandle::CreateAliasedModuleParameterHandle(ModuleParamHandle, TargetNode);
 
@@ -2286,6 +2606,14 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteSetModulePin(c
 				*TargetPin,
 				DynamicInputScript,
 				OutDynamicNode);
+
+			// The node was just created, so none of its inputs is overridden yet. Anything already aliased to its name on
+			// its override node was left behind by an earlier dynamic input of the same name and would be read by this
+			// one - clear it. This also heals assets edited before RemoveOverridePinsAliasedTo existed.
+			if (IsValid(OutDynamicNode))
+			{
+				RemoveOverridePinsAliasedTo(OutDynamicNode);
+			}
 
 			if (!IsValid(OutDynamicNode))
 			{
@@ -3460,44 +3788,14 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteSetNiagaraPara
 
 		if (ValueField && ValueField->IsValid())
 		{
-			if ((*ValueField)->Type == EJson::Object)
+			TArray<double> Components;
+			FString ParseError;
+			if (!ParseNumericComponents(*ValueField, {TEXT("x"), TEXT("y")}, {0.0, 0.0}, 2, Components, ParseError))
 			{
-				TSharedPtr<FJsonObject> Obj = (*ValueField)->AsObject();
-				double X = 0.0, Y = 0.0;
-				if (Obj->HasField(TEXT("x"))) X = Obj->GetNumberField(TEXT("x"));
-				else if (Obj->HasField(TEXT("X"))) X = Obj->GetNumberField(TEXT("X"));
-				if (Obj->HasField(TEXT("y"))) Y = Obj->GetNumberField(TEXT("y"));
-				else if (Obj->HasField(TEXT("Y"))) Y = Obj->GetNumberField(TEXT("Y"));
-				VecVal = FVector2f((float)X, (float)Y);
+				Result.Errors.Add(FString::Printf(TEXT("Could not read a Vector2 for '%s' from the value: %s"), *FullParamName, *ParseError));
+				return Result;
 			}
-			else if ((*ValueField)->Type == EJson::Array)
-			{
-				TArray<TSharedPtr<FJsonValue>> Arr = (*ValueField)->AsArray();
-				float X = (Arr.Num() > 0) ? (float)Arr[0]->AsNumber() : 0.0f;
-				float Y = (Arr.Num() > 1) ? (float)Arr[1]->AsNumber() : 0.0f;
-				VecVal = FVector2f(X, Y);
-			}
-			else if ((*ValueField)->Type == EJson::String)
-			{
-				FString Str = (*ValueField)->AsString();
-				TArray<FString> Parts;
-				Str.ParseIntoArray(Parts, TEXT(","), true);
-				if (Parts.Num() >= 2)
-				{
-					VecVal.X = FCString::Atof(*Parts[0]);
-					VecVal.Y = FCString::Atof(*Parts[1]);
-				}
-				else
-				{
-					float Scalar = FCString::Atof(*Str);
-					VecVal = FVector2f(Scalar, Scalar);
-				}
-			}
-			else if ((*ValueField)->Type == EJson::Number)
-			{
-				float Scalar = (float)(*ValueField)->AsNumber();
-				VecVal = FVector2f(Scalar, Scalar);
-			}
+			VecVal = FVector2f((float)Components[0], (float)Components[1]);
 		}
 
 		FNiagaraTypeDefinition TypeDef = FNiagaraTypeDefinition::GetVec2Def();
@@ -3517,48 +3815,14 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteSetNiagaraPara
 
 		if (ValueField && ValueField->IsValid())
 		{
-			if ((*ValueField)->Type == EJson::Object)
+			TArray<double> Components;
+			FString ParseError;
+			if (!ParseNumericComponents(*ValueField, {TEXT("x"), TEXT("y"), TEXT("z")}, {0.0, 0.0, 0.0}, 3, Components, ParseError))
 			{
-				TSharedPtr<FJsonObject> Obj = (*ValueField)->AsObject();
-				double X = 0.0, Y = 0.0, Z = 0.0;
-				if (Obj->HasField(TEXT("x"))) X = Obj->GetNumberField(TEXT("x"));
-				else if (Obj->HasField(TEXT("X"))) X = Obj->GetNumberField(TEXT("X"));
-				if (Obj->HasField(TEXT("y"))) Y = Obj->GetNumberField(TEXT("y"));
-				else if (Obj->HasField(TEXT("Y"))) Y = Obj->GetNumberField(TEXT("Y"));
-				if (Obj->HasField(TEXT("z"))) Z = Obj->GetNumberField(TEXT("z"));
-				else if (Obj->HasField(TEXT("Z"))) Z = Obj->GetNumberField(TEXT("Z"));
-				VecVal = FVector3f((float)X, (float)Y, (float)Z);
+				Result.Errors.Add(FString::Printf(TEXT("Could not read a Vector3 for '%s' from the value: %s"), *FullParamName, *ParseError));
+				return Result;
 			}
-			else if ((*ValueField)->Type == EJson::Array)
-			{
-				TArray<TSharedPtr<FJsonValue>> Arr = (*ValueField)->AsArray();
-				float X = (Arr.Num() > 0) ? (float)Arr[0]->AsNumber() : 0.0f;
-				float Y = (Arr.Num() > 1) ? (float)Arr[1]->AsNumber() : 0.0f;
-				float Z = (Arr.Num() > 2) ? (float)Arr[2]->AsNumber() : 0.0f;
-				VecVal = FVector3f(X, Y, Z);
-			}
-			else if ((*ValueField)->Type == EJson::String)
-			{
-				FString Str = (*ValueField)->AsString();
-				TArray<FString> Parts;
-				Str.ParseIntoArray(Parts, TEXT(","), true);
-				if (Parts.Num() >= 3)
-				{
-					VecVal.X = FCString::Atof(*Parts[0]);
-					VecVal.Y = FCString::Atof(*Parts[1]);
-					VecVal.Z = FCString::Atof(*Parts[2]);
-				}
-				else
-				{
-					float Scalar = FCString::Atof(*Str);
-					VecVal = FVector3f(Scalar, Scalar, Scalar);
-				}
-			}
-			else if ((*ValueField)->Type == EJson::Number)
-			{
-				float Scalar = (float)(*ValueField)->AsNumber();
-				VecVal = FVector3f(Scalar, Scalar, Scalar);
-			}
+			VecVal = FVector3f((float)Components[0], (float)Components[1], (float)Components[2]);
 		}
 
 		FNiagaraTypeDefinition TypeDef = FNiagaraTypeDefinition::GetVec3Def();
@@ -3578,45 +3842,14 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteSetNiagaraPara
 
 		if (ValueField && ValueField->IsValid())
 		{
-			if ((*ValueField)->Type == EJson::Object)
+			TArray<double> Components;
+			FString ParseError;
+			if (!ParseNumericComponents(*ValueField, {TEXT("r"), TEXT("g"), TEXT("b"), TEXT("a")}, {0.0, 0.0, 0.0, 1.0}, 3, Components, ParseError))
 			{
-				TSharedPtr<FJsonObject> Obj = (*ValueField)->AsObject();
-				double R = 0.0, G = 0.0, B = 0.0, A = 1.0;
-				if (Obj->HasField(TEXT("r"))) R = Obj->GetNumberField(TEXT("r"));
-				else if (Obj->HasField(TEXT("R"))) R = Obj->GetNumberField(TEXT("R"));
-				if (Obj->HasField(TEXT("g"))) G = Obj->GetNumberField(TEXT("g"));
-				else if (Obj->HasField(TEXT("G"))) G = Obj->GetNumberField(TEXT("G"));
-				if (Obj->HasField(TEXT("b"))) B = Obj->GetNumberField(TEXT("b"));
-				else if (Obj->HasField(TEXT("B"))) B = Obj->GetNumberField(TEXT("B"));
-				if (Obj->HasField(TEXT("a"))) A = Obj->GetNumberField(TEXT("a"));
-				else if (Obj->HasField(TEXT("A"))) A = Obj->GetNumberField(TEXT("A"));
-				ColorVal = FLinearColor((float)R, (float)G, (float)B, (float)A);
+				Result.Errors.Add(FString::Printf(TEXT("Could not read a LinearColor for '%s' from the value: %s"), *FullParamName, *ParseError));
+				return Result;
 			}
-			else if ((*ValueField)->Type == EJson::Array)
-			{
-				TArray<TSharedPtr<FJsonValue>> Arr = (*ValueField)->AsArray();
-				float R = (Arr.Num() > 0) ? (float)Arr[0]->AsNumber() : 0.0f;
-				float G = (Arr.Num() > 1) ? (float)Arr[1]->AsNumber() : 0.0f;
-				float B = (Arr.Num() > 2) ? (float)Arr[2]->AsNumber() : 0.0f;
-				float A = (Arr.Num() > 3) ? (float)Arr[3]->AsNumber() : 1.0f;
-				ColorVal = FLinearColor(R, G, B, A);
-			}
-			else if ((*ValueField)->Type == EJson::String)
-			{
-				FString Str = (*ValueField)->AsString();
-				if (!ColorVal.InitFromString(Str))
-				{
-					TArray<FString> Parts;
-					Str.ParseIntoArray(Parts, TEXT(","), true);
-					if (Parts.Num() >= 3)
-					{
-						ColorVal.R = FCString::Atof(*Parts[0]);
-						ColorVal.G = FCString::Atof(*Parts[1]);
-						ColorVal.B = FCString::Atof(*Parts[2]);
-						if (Parts.Num() >= 4) ColorVal.A = FCString::Atof(*Parts[3]);
-					}
-				}
-			}
+			ColorVal = FLinearColor((float)Components[0], (float)Components[1], (float)Components[2], (float)Components[3]);
 		}
 
 		FNiagaraTypeDefinition TypeDef = FNiagaraTypeDefinition::GetColorDef();
@@ -4410,7 +4643,7 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteRemoveRenderer
 	System->Modify();
 
 	Emitter->RemoveRenderer(TargetRenderer, EmitterData->Version.VersionGuid);
-	TargetRenderer->MarkAsGarbage();
+	MarkAsGarbageUnlessRooted(TargetRenderer);
 
 	Emitter->MarkPackageDirty();
 
@@ -4453,6 +4686,9 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteRemoveEmitter(
 		return Result;
 	}
 
+	// A compile still in flight works on the system's emitters; do not take one out from under it.
+	System->WaitForCompilationComplete(true, false);
+
 	FNiagaraEmitterHandle* TargetHandle = nullptr;
 	for (FNiagaraEmitterHandle& Handle : System->GetEmitterHandles())
 	{
@@ -4480,7 +4716,10 @@ FAgentFrameworkActionResult FAgentFrameworkNiagaraActions::ExecuteRemoveEmitter(
 	if (IsValid(TargetEmitter) && TargetEmitter->GetOuter() == System)
 	{
 		TargetEmitter->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional);
-		TargetEmitter->MarkAsGarbage();
+		if (!MarkAsGarbageUnlessRooted(TargetEmitter))
+		{
+			Result.Warnings.Add(FString::Printf(TEXT("Emitter object '%s' was still rooted, so it was moved out of the asset and left to garbage collection."), *TargetEmitter->GetName()));
+		}
 	}
 
 	UNiagaraSystemEditorData* SystemEditorData = Cast<UNiagaraSystemEditorData>(System->GetEditorData());
