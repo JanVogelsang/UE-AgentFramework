@@ -26,13 +26,15 @@ class PipeReader:
             return None
 
 class MockAgentClient:
-    def __init__(self, python_process=None, cpp_url="http://127.0.0.1:18777"):
+    def __init__(self, python_process=None, cpp_url="http://127.0.0.1:18777", endpoint_file=None):
         """
         Mock Agent Client for E2E testing.
         :param python_process: The subprocess.Popen object running the Python MCP server.
         :param cpp_url: The base HTTP URL of the C++ MCP server in Unreal Engine.
+        :param endpoint_file: The editor's Saved/AgentFramework/endpoint.json; its per-launch token is sent with every C++ call.
         """
         self.cpp_url = cpp_url
+        self.endpoint_file = endpoint_file
         self.python_process = python_process
         self.python_reader = None
         self._request_id = 1
@@ -90,6 +92,16 @@ class MockAgentClient:
             python_process.stdin.write(payload)
             python_process.stdin.flush()
 
+    def _read_token(self):
+        """The editor's per-launch token, read on every call because a restarted editor publishes a new one."""
+        if not self.endpoint_file:
+            return None
+        try:
+            with open(self.endpoint_file) as f:
+                return json.load(f).get("token") or None
+        except Exception:
+            return None
+
     def call_cpp_tool(self, tool_name, arguments):
         """
         Sends an HTTP POST to /api/execute_tool on the C++ internal server.
@@ -99,7 +111,11 @@ class MockAgentClient:
             "name": tool_name,
             "arguments": arguments
         }
-        response = requests.post(url, json=payload, timeout=30.0)
+        headers = {}
+        token = self._read_token()
+        if token:
+            headers["X-AgentFramework-Token"] = token
+        response = requests.post(url, json=payload, headers=headers, timeout=30.0)
         response.raise_for_status()
         return response.json()
 

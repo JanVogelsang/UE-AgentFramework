@@ -7,6 +7,8 @@ import urllib.request
 import urllib.error
 import sys
 
+from editor_endpoint import execute_tool_url, json_headers, tools_url
+
 def main():
     # 1. Determine target project directory
     user_profile = os.environ.get("USERPROFILE") or os.path.expanduser("~")
@@ -30,8 +32,8 @@ def main():
             except Exception as e:
                 print(f"Error removing {p}: {e}")
 
-    url_tools = "http://localhost:18777/api/tools"
-    url_execute = "http://localhost:18777/api/execute_tool"
+    url_tools = tools_url()
+    url_execute = execute_tool_url()
 
     # b) Query /api/tools from the running C++ editor server
     print(f"Querying tools from {url_tools} (Base State)...")
@@ -68,7 +70,7 @@ def main():
         req = urllib.request.Request(
             url_execute,
             data=req_body,
-            headers={"Content-Type": "application/json"},
+            headers=json_headers(),
             method="POST"
         )
         with urllib.request.urlopen(req, timeout=5) as response:

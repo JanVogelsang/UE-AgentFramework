@@ -215,11 +215,34 @@ async def discover_tools(ue_port, profile):
         last_tools_hash = hashlib.md5(json.dumps(sorted_tools, sort_keys=True).encode()).hexdigest()
         return final_tools
 
+AGENTFRAMEWORK_PORT = 18777
+
+def read_published_token(port):
+    """Per-launch token from the endpoint.json the editor publishes, or None.
+
+    Only returned when the file names `port`, so a stale file never hands a token to another
+    editor. An editor that publishes no token is called without the header, as before.
+    """
+    try:
+        with open(Path.cwd() / "Saved" / "AgentFramework" / "endpoint.json") as f:
+            endpoint = json.load(f)
+        if int(endpoint.get("port", 0)) == int(port):
+            return endpoint.get("token") or None
+    except Exception:
+        pass
+    return None
+
 async def call_agentframework_tool(name, arguments, profile):
     payload = {"name": name, "arguments": arguments}
+    headers = {}
+    token = read_published_token(AGENTFRAMEWORK_PORT)
+    if token:
+        headers["X-AgentFramework-Token"] = token
     async with httpx.AsyncClient(timeout=None) as client:
         try:
-            resp = await client.post("http://127.0.0.1:18777/api/execute_tool", json=payload, timeout=None)
+            resp = await client.post(f"http://127.0.0.1:{AGENTFRAMEWORK_PORT}/api/execute_tool", json=payload, headers=headers, timeout=None)
+            if resp.status_code in (400, 401, 403):
+                print(f"WARNING: editor rejected {name} (HTTP {resp.status_code}): {resp.text[:200]}. Check Saved/AgentFramework/endpoint.json token.", file=sys.stderr)
             ue_result = resp.json()
             bSuccess = ue_result.get("bSuccess", False)
             bRequiresHumanVerification = ue_result.get("bRequiresHumanVerification", False)

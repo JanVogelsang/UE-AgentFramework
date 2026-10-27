@@ -2,7 +2,9 @@ import json
 import urllib.request
 import urllib.error
 
-EDITOR_HTTP_URL = "http://127.0.0.1:18777/api/execute_tool"
+from editor_endpoint import editor_port, execute_tool_url, json_headers
+
+EDITOR_HTTP_URL = execute_tool_url()
 
 def find_unreferenced_assets(folder_path, include_soft_references=True):
     """
@@ -19,7 +21,7 @@ def find_unreferenced_assets(folder_path, include_soft_references=True):
     req = urllib.request.Request(
         EDITOR_HTTP_URL,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"}
+        headers=json_headers()
     )
 
     try:
@@ -35,7 +37,7 @@ def find_unreferenced_assets(folder_path, include_soft_references=True):
                 print(f"Error: {res_data.get('Errors')}")
                 return []
     except urllib.error.URLError as e:
-        print(f"Failed to connect to Editor HTTP server on port 18777: {e}")
+        print(f"Failed to connect to Editor HTTP server on port {editor_port()}: {e}")
         return []
 
 if __name__ == "__main__":

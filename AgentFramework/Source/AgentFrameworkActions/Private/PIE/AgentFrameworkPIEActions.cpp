@@ -15,6 +15,9 @@
 #include "Blueprint/WidgetTree.h"
 #include "Components/PanelWidget.h"
 #include "EngineUtils.h"
+#include "Engine/Player.h"
+#include "HAL/IConsoleManager.h"
+#include "Misc/StringOutputDevice.h"
 #include "GameFramework/Pawn.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Components/Button.h"
@@ -1163,26 +1166,33 @@ FAgentFrameworkActionResult FAgentFrameworkPIEActions::ExecuteConsoleCommand(
 		return Result;
 	}
 
-	bool bExecuted = false;
-	if (APlayerController* PC = World->GetFirstPlayerController())
+	// Measure the outcome: the console manager (cvars and registered commands) and the engine/player Exec chain
+	// each report whether they recognised the command. If none did, it was a typo or an unknown cvar.
+	FStringOutputDevice Output;
+	bool bHandled = IConsoleManager::Get().ProcessUserConsoleInput(*Command, Output, World);
+	if (not bHandled)
 	{
-		PC->ConsoleCommand(Command, true);
-		bExecuted = true;
-	}
-	else if (GEngine)
-	{
-		GEngine->Exec(World, *Command);
-		bExecuted = true;
+		APlayerController* PC = World->GetFirstPlayerController();
+		if (PC and IsValid(PC->Player))
+		{
+			bHandled = PC->Player->Exec(World, *Command, Output);
+		}
+		if (not bHandled and GEngine)
+		{
+			bHandled = GEngine->Exec(World, *Command, Output);
+		}
 	}
 
-	if (bExecuted)
+	if (bHandled)
 	{
 		Result.bSuccess = true;
-		Result.ResultMessage = FString::Printf(TEXT("Executed console command '%s' in PIE world '%s'."), *Command, *World->GetName());
+		Result.ResultMessage = FString::Printf(TEXT("Executed console command '%s' in PIE world '%s'.%s"), *Command, *World->GetName(),
+			Output.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" Output: %s"), *Output));
 	}
 	else
 	{
-		Result.Errors.Add(TEXT("Failed to execute console command: no PlayerController or GEngine available in PIE world."));
+		Result.Errors.Add(FString::Printf(TEXT("Console command '%s' was not recognised (unknown command or cvar) in PIE world '%s'.%s"), *Command, *World->GetName(),
+			Output.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" Output: %s"), *Output)));
 	}
 
 	return Result;
@@ -1244,22 +1254,45 @@ FAgentFrameworkActionResult FAgentFrameworkPIEActions::ExecuteCallActorFunction(
 		return Result;
 	}
 
+	// Exact name/label matches win; a path substring is only a fallback and must be unambiguous.
 	AActor* TargetActor = nullptr;
+	TArray<AActor*> ExactMatches;
+	TArray<AActor*> PathMatches;
 	for (TActorIterator<AActor> It(World); It; ++It)
 	{
 		AActor* Actor = *It;
 		if (IsValid(Actor))
 		{
-			if (Actor->GetName().Equals(ActorIdentifier, ESearchCase::IgnoreCase) ||
+			if (Actor->GetName().Equals(ActorIdentifier, ESearchCase::IgnoreCase)
 #if WITH_EDITOR
-				Actor->GetActorLabel().Equals(ActorIdentifier, ESearchCase::IgnoreCase) ||
+				or Actor->GetActorLabel().Equals(ActorIdentifier, ESearchCase::IgnoreCase)
 #endif
-				Actor->GetPathName().Contains(ActorIdentifier))
+				)
 			{
-				TargetActor = Actor;
-				break;
+				ExactMatches.Add(Actor);
+			}
+			else if (Actor->GetPathName().Contains(ActorIdentifier))
+			{
+				PathMatches.Add(Actor);
 			}
 		}
+	}
+
+	const TArray<AActor*>& Candidates = ExactMatches.Num() > 0 ? ExactMatches : PathMatches;
+	if (Candidates.Num() > 1)
+	{
+		FString Names;
+		for (int32 Index = 0; Index < FMath::Min(Candidates.Num(), 5); ++Index)
+		{
+			Names += (Index > 0 ? TEXT(", ") : TEXT("")) + Candidates[Index]->GetName();
+		}
+		Result.Errors.Add(FString::Printf(TEXT("Actor '%s' is ambiguous: %d actors match (%s%s). Use the exact actor name."),
+			*ActorIdentifier, Candidates.Num(), *Names, Candidates.Num() > 5 ? TEXT(", ...") : TEXT("")));
+		return Result;
+	}
+	if (Candidates.Num() == 1)
+	{
+		TargetActor = Candidates[0];
 	}
 
 	if (!TargetActor)
@@ -1274,6 +1307,19 @@ FAgentFrameworkActionResult FAgentFrameworkPIEActions::ExecuteCallActorFunction(
 		Result.Errors.Add(FString::Printf(TEXT("Function '%s' not found on actor '%s' (%s)."),
 			*FunctionName, *TargetActor->GetName(), *TargetActor->GetClass()->GetName()));
 		return Result;
+	}
+
+	// This tool cannot pass arguments: calling a function that needs them with zeroed values would report a
+	// success that never happened. Refuse instead.
+	for (TFieldIterator<FProperty> It(Func); It; ++It)
+	{
+		const FProperty* Param = *It;
+		if (Param and Param->HasAnyPropertyFlags(CPF_Parm) and not Param->HasAnyPropertyFlags(CPF_ReturnParm | CPF_OutParm))
+		{
+			Result.Errors.Add(FString::Printf(TEXT("Function '%s' takes input parameters ('%s'...); call_pie_actor_function cannot pass arguments, so it was not invoked."),
+				*FunctionName, *Param->GetName()));
+			return Result;
+		}
 	}
 
 	// Safe parameter allocation to prevent access violations if function expects parameters

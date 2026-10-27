@@ -196,6 +196,7 @@ Because `bridge/main.py` is imported once per MCP server process, changes to it 
 
 ### Client / Bridge ↔ Internal C++ Server
 - **Protocol**: JSON-RPC over stdio (Bridge) mapped to HTTP POST `/api/execute_tool` (Editor port 18777 by default, configurable via `-AgentFrameworkPort=` / `AGENTFRAMEWORK_HTTP_PORT`, or auto-discovered via Saved endpoint file).
+- **Authentication**: the listener binds to 127.0.0.1 only and rejects requests that carry an `Origin` header or a non-JSON `Content-Type`. Each editor launch writes a random `token` into `Saved/AgentFramework/endpoint.json`; every POST to `/api/execute_tool` must send it as `X-AgentFramework-Token` (the bridge, ExternalServer and `src/scripts/editor_endpoint.py` do). Restart long-lived bridges after updating the plugin.
 - **Standard Payload**:
   - Request: `{"name": "<tool_name>", "arguments": { ... }}`
   - Response: `{"bSuccess": true, "ResultMessage": "...", "Errors": [], "Warnings": []}`

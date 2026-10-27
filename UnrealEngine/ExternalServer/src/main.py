@@ -1931,10 +1931,25 @@ def is_likely_blueprint(filepath: str) -> bool:
         return True
     return False
 
+def editor_token_sync(port: int) -> Optional[str]:
+    """Per-launch token from Saved/AgentFramework/endpoint.json when it names this port; None for older editors."""
+    try:
+        with open(Path.cwd() / "Saved" / "AgentFramework" / "endpoint.json") as f:
+            endpoint = json.load(f)
+        if int(endpoint.get("port", 0)) == port:
+            return endpoint.get("token") or None
+    except Exception:
+        pass
+    return None
+
 def sync_single_blueprint_sync_worker(filepath: str, asset_path: str, mtime: float, port: int) -> bool:
     url = f"http://127.0.0.1:{port}/api/execute_tool"
     payload = json.dumps({"tool_name": "export_blueprint_summary", "parameters": {"asset_path": asset_path}}).encode('utf-8')
-    req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+    headers = {'Content-Type': 'application/json'}
+    token = editor_token_sync(port)
+    if token:
+        headers['X-AgentFramework-Token'] = token
+    req = urllib.request.Request(url, data=payload, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=15) as response:
             resp_data = json.loads(response.read().decode('utf-8'))

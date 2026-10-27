@@ -11,6 +11,7 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonWriter.h"
 #include "Misc/CommandLine.h"
+#include "Misc/ConfigCacheIni.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Parse.h"
 #include "Misc/Paths.h"
@@ -58,6 +59,77 @@
 
 TSharedPtr<FAgentFrameworkActionRouter> FAgentFrameworkHttpServer::ActionRouter = nullptr;
 uint32 FAgentFrameworkHttpServer::Port = 18777;
+
+namespace
+{
+	/** Per-launch secret required in the X-AgentFramework-Token header of mutating requests. Published only in endpoint.json. */
+	FString GAgentFrameworkToken;
+
+	const TCHAR* const TokenHeaderName = TEXT("X-AgentFramework-Token");
+
+	/** First value of a request header, matched case-insensitively. Returns false if absent. */
+	bool FindRequestHeader(const FHttpServerRequest& Request, const TCHAR* Name, FString& OutValue)
+	{
+		for (const TPair<FString, TArray<FString>>& Pair : Request.Headers)
+		{
+			if (Pair.Key.Equals(Name, ESearchCase::IgnoreCase))
+			{
+				OutValue = Pair.Value.Num() > 0 ? Pair.Value[0] : FString();
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** Length-independent comparison, so a wrong token leaks nothing through timing. */
+	bool TokensMatch(const FString& Expected, const FString& Given)
+	{
+		uint32 Diff = static_cast<uint32>(Expected.Len() ^ Given.Len());
+		const int32 Count = FMath::Min(Expected.Len(), Given.Len());
+		for (int32 Index = 0; Index < Count; ++Index)
+		{
+			Diff |= static_cast<uint32>(Expected[Index] ^ Given[Index]);
+		}
+		return Diff == 0;
+	}
+
+	/**
+	 * Gate for mutating routes: no Origin header (browsers always send one on cross-origin requests; the
+	 * bridge and scripts never do), Content-Type application/json (a "simple" cross-origin POST cannot set
+	 * it without a preflight), and the per-launch token. Sends the rejection itself and returns false.
+	 */
+	bool AuthorizeMutatingRequest(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
+	{
+		FString Value;
+		const TCHAR* Reason = nullptr;
+		EHttpServerResponseCodes Code = EHttpServerResponseCodes::Denied;
+		if (FindRequestHeader(Request, TEXT("Origin"), Value))
+		{
+			Reason = TEXT("request carries an Origin header (cross-origin browser request)");
+		}
+		else if (not FindRequestHeader(Request, TEXT("Content-Type"), Value) or not Value.TrimStartAndEnd().ToLower().StartsWith(TEXT("application/json")))
+		{
+			Reason = TEXT("Content-Type is not application/json");
+			Code = EHttpServerResponseCodes::BadRequest;
+		}
+		else if (not GAgentFrameworkToken.IsEmpty())
+		{
+			FString Given;
+			if (not FindRequestHeader(Request, TokenHeaderName, Given) or not TokensMatch(GAgentFrameworkToken, Given.TrimStartAndEnd()))
+			{
+				Reason = TEXT("missing or wrong X-AgentFramework-Token header (read it from Saved/AgentFramework/endpoint.json)");
+			}
+		}
+
+		if (Reason == nullptr)
+		{
+			return true;
+		}
+		UE_LOG(LogAgentFramework, Warning, TEXT("AgentFramework: rejected a request to /api/execute_tool: %s."), Reason);
+		OnComplete(FHttpServerResponse::Error(Code, TEXT("rejected"), Reason));
+		return false;
+	}
+}
 
 bool FAgentFrameworkHttpServer::IsValidPort(const uint32 InPort)
 {
@@ -108,6 +180,7 @@ void FAgentFrameworkHttpServer::WriteEndpointFile()
 	Endpoint->SetNumberField(TEXT("pid"), static_cast<double>(FPlatformProcess::GetCurrentProcessId()));
 	Endpoint->SetStringField(TEXT("project"), FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath()));
 	Endpoint->SetStringField(TEXT("started_utc"), FDateTime::UtcNow().ToIso8601());
+	Endpoint->SetStringField(TEXT("token"), GAgentFrameworkToken);
 
 	FString Json;
 	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Json);
@@ -146,6 +219,15 @@ void FAgentFrameworkHttpServer::RemoveEndpointFile()
 void FAgentFrameworkHttpServer::Start()
 {
 	Port = ResolvePort();
+
+	// 256 random bits per launch. Clients read it from endpoint.json (project-local, not reachable by a web page).
+	GAgentFrameworkToken = FGuid::NewGuid().ToString(EGuidFormats::Digits) + FGuid::NewGuid().ToString(EGuidFormats::Digits);
+
+	// Loopback only, whatever [HTTPServer.Listeners] says in an ini: the listener executes editor tools.
+	if (GConfig)
+	{
+		GConfig->SetString(TEXT("HTTPServer.Listeners"), TEXT("DefaultBindAddress"), TEXT("127.0.0.1"), GEngineIni);
+	}
 
 	ActionRouter = MakeShared<FAgentFrameworkActionRouter>();
 	RegisterAllExecutors(ActionRouter.ToSharedRef());
@@ -481,6 +563,11 @@ namespace
 
 bool FAgentFrameworkHttpServer::HandleExecuteToolRequest(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
 {
+	if (not AuthorizeMutatingRequest(Request, OnComplete))
+	{
+		return true;
+	}
+
 	FString BodyString;
 	if (Request.Body.Num() > 0)
 	{

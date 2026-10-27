@@ -211,7 +211,8 @@ def mock_agent_client(unreal_port_wait, python_server_process):
     """
     client = MockAgentClient(
         python_process=python_server_process,
-        cpp_url=f"http://127.0.0.1:{PORT}"
+        cpp_url=f"http://127.0.0.1:{PORT}",
+        endpoint_file=os.path.join(os.path.dirname(os.path.normpath(PROJECT_PATH)), "Saved", "AgentFramework", "endpoint.json")
     )
     yield client
 
