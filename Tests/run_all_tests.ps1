@@ -1,4 +1,4 @@
-# Consolidated Test Runner for UE-AgentFramework Dual-MCP
+# Consolidated Test Runner for UE-AgentFramework (Unreal Engine 5.9)
 # This script runs both the C++ headless Unreal Editor automation tests
 # and the Python integration/unit tests sequentially.
 
@@ -18,7 +18,7 @@ if (-not (Test-Path $python_exe)) {
 }
 
 # Resolve Unreal Engine dynamically based on the project's EngineAssociation
-$engine_association = "5.8" # Default fallback
+$engine_association = "5.9" # Default fallback
 if (Test-Path $project_path) {
     try {
         $uproject_json = Get-Content -Raw -Path $project_path | ConvertFrom-Json
@@ -26,7 +26,7 @@ if (Test-Path $project_path) {
             $engine_association = $uproject_json.EngineAssociation
         }
     } catch {
-        Write-Host "Warning: Failed to parse uproject JSON. Using default association." -ForegroundColor Yellow
+        Write-Host "Warning: Failed to parse uproject JSON. Using default association 5.9." -ForegroundColor Yellow
     }
 }
 
@@ -45,7 +45,7 @@ if ($engine_association -match "^\d+\.\d+$") {
     
     if (-not $installed_dir) {
         $FallbackPaths = @(
-            "C:\Program Files\Epic Games\UE_$engine_association",
+            "D:\UE_$engine_association",
             "C:\Program Files\Epic Games\UE_$engine_association",
             "D:\Epic Games\UE_$engine_association"
         )
@@ -64,7 +64,11 @@ if ($engine_association -match "^\d+\.\d+$") {
 }
 
 if (-not $installed_dir) {
-    $installed_dir = "C:\Program Files\Epic Games\UE_5.8"
+    if (Test-Path "D:\UE_5.9") {
+        $installed_dir = "D:\UE_5.9"
+    } else {
+        $installed_dir = "C:\Program Files\Epic Games\UE_5.9"
+    }
 }
 
 $installed_dir = $installed_dir.TrimEnd('\')
@@ -74,7 +78,7 @@ if (-not (Test-Path $unreal_exe)) {
 }
 
 Write-Host "=================================================================" -ForegroundColor Magenta
-Write-Host "             UE-AgentFramework Consolidated Test Runner            " -ForegroundColor Magenta
+Write-Host "       UE-AgentFramework (UE 5.9) Consolidated Test Runner       " -ForegroundColor Magenta
 Write-Host "=================================================================" -ForegroundColor Magenta
 
 # 1. Verify environment paths
@@ -92,13 +96,12 @@ if (-not (Test-Path $python_exe)) {
 }
 
 # 2. Run C++ Headless Automation Tests
-Write-Host "`n[1/2] Running C++ Headless Unreal Editor Automation Tests..." -ForegroundColor Cyan
-Write-Host "Command: UnrealEditor-Cmd.exe -NullRHI -NoSound -NoSourceControl -unattended -ExecCmds=`"Automation RunTests AgentFramework; Quit`"" -ForegroundColor DarkGray
+Write-Host "`n[1/2] Running C++ Headless Unreal Editor 5.9 Automation Tests..." -ForegroundColor Cyan
+Write-Host "Command: UnrealEditor-Cmd.exe -NullRHI -NoSound -NoSourceControl -unattended -ExecCmds=`"Automation RunTests AgentFramework.Toolsets; Quit`"" -ForegroundColor DarkGray
 
-# We temporarily override the environment to prevent buffering if possible
 $processInfo = New-Object System.Diagnostics.ProcessStartInfo
 $processInfo.FileName = $unreal_exe
-$processInfo.Arguments = "`"$project_path`" -NullRHI -NoSound -NoSourceControl -unattended -ExecCmds=`"Automation RunTests AgentFramework; Quit`" -log"
+$processInfo.Arguments = "`"$project_path`" -NullRHI -NoSound -NoSourceControl -unattended -ExecCmds=`"Automation RunTests AgentFramework.Toolsets; Quit`" -log"
 $processInfo.UseShellExecute = $false
 $processInfo.RedirectStandardOutput = $false
 $processInfo.RedirectStandardError = $false
@@ -120,7 +123,6 @@ if ($cpp_exit_code -ne 0) {
 Write-Host "`n[2/2] Running Python unit and integration tests..." -ForegroundColor Cyan
 Write-Host "Command: python -m pytest" -ForegroundColor DarkGray
 
-# Trigger python tests
 $python_process = Start-Process -FilePath $python_exe -ArgumentList "`"$PSScriptRoot\run_tests.py`"" -Wait -NoNewWindow -PassThru
 $python_exit_code = $python_process.ExitCode
 

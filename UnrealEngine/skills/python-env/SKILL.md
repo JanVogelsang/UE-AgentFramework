@@ -21,14 +21,14 @@ On Windows systems, the default `python` or `pytest` commands in the environment
     ```
   * **Running the Test Suite**:
     ```powershell
-    powershell -File .\run_tests.ps1
+    powershell -File .\Tests\run_tests.ps1
     # OR
-    & "$env:USERPROFILE\AppData\Local\Microsoft\WindowsApps\python.exe" run_tests.py
+    & "$env:USERPROFILE\AppData\Local\Microsoft\WindowsApps\python.exe" .\Tests\run_tests.py
     ```
 * **For other developer workspaces or CI environments**:
   * Locate the standard user python interpreter or virtual environment.
   * Install dependencies: `python -m pip install -r Tests/requirements.txt --user`.
-  * Run tests using the PowerShell runner wrapper: `powershell -File .\run_tests.ps1` (it will automatically resolve the correct environment variables and DLL folders).
+  * Run tests using the PowerShell runner wrapper: `powershell -File .\Tests\run_tests.ps1` (it will automatically resolve the correct environment variables and DLL folders).
 
 ---
 
@@ -38,7 +38,7 @@ Unreal Engine builds are managed via the Unreal Automation Tool (UAT).
 * To prevent conflicting concurrent build session locks, you must set the mutex bypass environment variable before compilation:
   ```powershell
   $env:uebp_UATMutexNoWait = '1'
-  powershell -ExecutionPolicy Bypass -File .\build_plugin.ps1 -NoZip
+  powershell -ExecutionPolicy Bypass -File .\build_plugin.ps1 -UEVersion "5.9" -NoZip
   ```
 
 ---
@@ -72,6 +72,6 @@ If you are developing or running the External Python MCP server or any stdio-bas
 ## 5. Unreal Engine Python API Search
 
 When writing Python scripts to automate tasks in Unreal Engine:
-1. **Never guess API signatures**: Unreal Engine Python API methods frequently change or deprecate across engine versions (e.g. UE 5.8 vs 5.4).
+1. **Never guess API signatures**: Unreal Engine Python API methods frequently change or deprecate across engine versions (e.g., UE 5.9 vs. earlier releases).
 2. **Use Vector Search**: Query `search_vector_db` with terms like `"unreal.SourceControl"` or `"screenshot python"` to retrieve the exact class, function, and parameter signatures parsed directly from `unreal.pyi`.
 

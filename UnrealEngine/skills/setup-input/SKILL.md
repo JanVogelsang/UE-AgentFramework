@@ -1,110 +1,53 @@
 ---
 name: setup-input
-description: Configure the Enhanced Input system with Input Actions, Mapping Contexts, Modifiers, and Triggers via native MCP tools.
+description: Use this skill to create and configure Unreal Engine 5.9 Enhanced Input assets (`UInputAction`, `UInputMappingContext`), bind keys, and configure `UInputModifier` and `UInputTrigger` chains via `AgentFrameworkActions.AgentFrameworkEnhancedInputAuthoringToolset`.
 ---
-# Skill: Setup Enhanced Input
-## Description
-Configure the Enhanced Input system with Input Actions, Mapping Contexts, key mapping Modifiers, and Triggers.
-## Arguments
-- {{arg}}: The action name to set up (e.g., Jump, Sprint, Interact, Move)
-## Steps
-1. **Create Input Action Asset**: Use the `create_input_action` MCP tool to create `/Game/Input/Actions/IA_{{arg}}`:
-   ```json
-   {
-     "PackagePath": "/Game/Input/Actions",
-     "ActionName": "IA_{{arg}}",
-     "ValueType": "Digital"
-   }
-   ```
-   *(Supported `ValueType` options: `Digital`, `Axis1D`, `Axis2D`, `Axis3D`)*
 
-2. **Add Key Mapping to Input Mapping Context**:
-   - If `/Game/Input/IMC_Default` does not exist, create it via `create_input_mapping_context`:
-     ```json
-     {
-       "PackagePath": "/Game/Input",
-       "ContextName": "IMC_Default"
-     }
-     ```
-   - Bind the target key mapping using `add_input_mapping`:
-     ```json
-     {
-       "ContextAsset": "/Game/Input/IMC_Default",
-       "InputActionAsset": "/Game/Input/Actions/IA_{{arg}}",
-       "Key": "SpaceBar"
-     }
-     ```
+# Setup Enhanced Input (Unreal Engine 5.9)
 
-3. **Configure Key Mapping Modifiers & Triggers**:
-   Attach key modifiers (e.g. `Negate`, `SwizzleAxis`) and trigger conditions (e.g. `Pressed`, `Hold`, `Tap`) using `configure_input_mapping_modifiers_triggers`:
-   - **Example 1: Axis Negation (e.g. Move Backward 'S' key)**:
-     ```json
-     {
-       "ContextAsset": "/Game/Input/IMC_Default",
-       "InputActionAsset": "/Game/Input/Actions/IA_Move",
-       "Key": "S",
-       "Modifiers": [ { "Type": "Negate" } ]
-     }
-     ```
-   - **Example 2: 2D Vector Swizzle (e.g. Move Forward 'W' key)**:
-     ```json
-     {
-       "ContextAsset": "/Game/Input/IMC_Default",
-       "InputActionAsset": "/Game/Input/Actions/IA_Move",
-       "Key": "W",
-       "Modifiers": [ { "Type": "SwizzleAxis", "Order": "YXZ" } ]
-     }
-     ```
-   - **Example 3: Hold Trigger (e.g. Charge Attack / Sprint Hold)**:
-     ```json
-     {
-       "ContextAsset": "/Game/Input/IMC_Default",
-       "InputActionAsset": "/Game/Input/Actions/IA_Sprint",
-       "Key": "LeftShift",
-       "Triggers": [ { "Type": "Hold", "HoldTimeThreshold": 0.5, "bIsOneShot": true } ]
-     }
-     ```
+Use `AgentFrameworkActions.AgentFrameworkEnhancedInputAuthoringToolset` (via `call_tool` on `/mcp`) for authoring Enhanced Input assets in the Content Browser, and `InputToolset.InputToolset` (`ApplyInput`, `IsInputApplied`) for injecting runtime inputs during PIE testing.
 
-4. **In the character/pawn header**, add:
-   ```cpp
-   UPROPERTY(EditDefaultsOnly, Category="Input")
-   TObjectPtr<UInputAction> {{arg}}Action;
-   void Handle{{arg}}(const FInputActionValue& Value);
-   ```
+## Workflow
 
-5. **In the character/pawn class**, override `SetupPlayerInputComponent` to bind the action:
-   ```cpp
-   // Header
-   virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
+### Step 1: Create Input Actions (`UInputAction`)
+Call `AgentFrameworkActions.AgentFrameworkEnhancedInputAuthoringToolset.CreateInputAction` for each semantic gameplay input:
+- `AssetPath`: Full package path (e.g., `/Game/Input/Actions/IA_Move`, `/Game/Input/Actions/IA_Look`, `/Game/Input/Actions/IA_Jump`).
+- `ValueType`:
+  - `"Boolean"` (also accepts `"Bool"`) — Buttons such as Jump, Fire, Interact, Crouch.
+  - `"Axis1D"` (also accepts `"Float"`, `"1D"`) — Single-axis inputs such as Throttle, Zoom, Scroll.
+  - `"Axis2D"` (also accepts `"Vector2D"`, `"2D"`) — 2D directional inputs such as Move (`WASD` / Left Stick) or Look (Mouse Delta / Right Stick).
+  - `"Axis3D"` (also accepts `"Vector"`, `"3D"`) — 3D spatial inputs.
+- Returns `FAgentFrameworkInputActionResult` (`AssetPath`, `PackageName`, `ValueType`).
 
-   // Source
-   void AMyCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
-   {
-       Super::SetupPlayerInputComponent(PlayerInputComponent);
-       
-       if (UEnhancedInputComponent* EIC = Cast<UEnhancedInputComponent>(PlayerInputComponent))
-       {
-           EIC->BindAction({{arg}}Action, ETriggerEvent::Triggered, this, &AMyCharacter::Handle{{arg}});
-       }
-   }
-   ```
+### Step 2: Create an Input Mapping Context (`UInputMappingContext`)
+Call `AgentFrameworkActions.AgentFrameworkEnhancedInputAuthoringToolset.CreateInputMappingContext`:
+- `AssetPath`: Full package path (e.g., `/Game/Input/IMC_Default`).
+- Returns `FAgentFrameworkInputMappingContextResult` (`AssetPath`, `PackageName`).
 
-6. **Implement the handler function** in C++:
-   ```cpp
-   void AMyCharacter::Handle{{arg}}(const FInputActionValue& Value)
-   {
-       // Retrieve input value (e.g. float or Vector2D depending on configuration)
-       // float AxisValue = Value.Get<float>();
-   }
-   ```
+### Step 3: Bind Keys to Input Actions (`AddInputMapping`)
+Call `AgentFrameworkActions.AgentFrameworkEnhancedInputAuthoringToolset.AddInputMapping`:
+- `MappingContextPath`: Path to the `UInputMappingContext` (e.g., `/Game/Input/IMC_Default`).
+- `InputActionPath`: Path to the `UInputAction` (e.g., `/Game/Input/Actions/IA_Move`).
+- `KeyName`: Unreal Engine `FKey` name, such as:
+  - Keyboard: `W`, `A`, `S`, `D`, `SpaceBar`, `LeftShift`, `LeftControl`, `E`, `F`, `Tab`, `Escape`
+  - Mouse: `Mouse2D`, `MouseX`, `MouseY`, `LeftMouseButton`, `RightMouseButton`, `MouseWheelAxis`
+  - Gamepad: `Gamepad_Left2D`, `Gamepad_Right2D`, `Gamepad_FaceButton_Bottom`, `Gamepad_RightTriggerAxis`
+- Optional `Modifiers`: Array of `FAgentFrameworkInputModifierSpec` objects `{"Type": "...", "Properties": {"Key": "Val"}}`.
+- Optional `Triggers`: Array of `FAgentFrameworkInputTriggerSpec` objects `{"Type": "...", "Properties": {"Key": "Val"}}`.
+- Returns `FAgentFrameworkInputMappingResult` (`MappingContextPath`, `InputActionPath`, `KeyName`, `ModifierCount`, `TriggerCount`, `TotalMappings`).
 
-7. **Blueprint Binding Alternative**:
-   - In a Blueprint Character graph, right-click and search for `"EnhancedAction IA_{{arg}}"`.
-   - Add the **Enhanced Action IA_{{arg}}** node.
-   - Wire your game logic nodes to the **Triggered** or **Started** / **Completed** pins.
+### Step 4: Configure Modifiers & Triggers (`ConfigureInputMappingModifiersTriggers`)
+Call `AgentFrameworkActions.AgentFrameworkEnhancedInputAuthoringToolset.ConfigureInputMappingModifiersTriggers` to update or replace the `UInputModifier` / `UInputTrigger` arrays on an existing `(MappingContextPath, InputActionPath, KeyName)` mapping (passing an explicit empty array `[]` clears modifiers or triggers):
+- **Standard 2D Movement (`IA_Move` as `Axis2D`):**
+  - `D` (Right, +X): omit `Modifiers` or pass `[]`
+  - `A` (Left, -X): `Modifiers = [{"Type": "Negate"}]`
+  - `W` (Forward, +Y): `Modifiers = [{"Type": "SwizzleAxis", "Properties": {"Order": "YXZ"}}]`
+  - `S` (Backward, -Y): `Modifiers = [{"Type": "SwizzleAxis", "Properties": {"Order": "YXZ"}}, {"Type": "Negate"}]`
+- **How `Type` Resolves:** Concrete `UInputModifier` and `UInputTrigger` subclasses resolve by class name or short name without the `InputModifier` / `InputTrigger` prefix:
+  - Common Modifiers: `"Negate"`, `"SwizzleAxis"`, `"DeadZone"`, `"Scalar"`, `"ResponseCurveExponential"`, `"FOVScaling"`, `"Smooth"`.
+  - Common Triggers: `"Down"`, `"Pressed"`, `"Released"`, `"Hold"`, `"HoldAndRelease"`, `"Tap"`, `"Pulse"`, `"ChordAction"`.
+  - Use `Properties` (`TMap<FString, FString>`) to set reflected `UPROPERTY` fields using Unreal `ImportText` strings (e.g., `{"HoldTimeThreshold": "0.5"}` or `{"LowerThreshold": "0.2"}`).
 
-## Notes
-- Ensure `"EnhancedInput"` is added to `PublicDependencyModuleNames` in the project's `.Build.cs` file.
-- Include `EnhancedInput/Public/EnhancedInputComponent.h`.
-- The project must have the EnhancedInput plugin enabled.
-- **Python API Tip (UE 5.8)**: When mapping keys via Unreal Python, instantiate `unreal.Key()` with `key.set_editor_property('key_name', 'Space')`, construct `mapping = unreal.EnhancedActionKeyMapping()`, set `action` and `key`, and append `mapping` to `imc.get_editor_property('mappings')` before calling `unreal.EditorAssetLibrary.save_loaded_asset(imc)`.
+### Step 5: Bind in Blueprint or C++ & Verify in PIE
+1. Assign the `UInputMappingContext` and `UInputAction` references on the Character or PlayerController Blueprint using `EditorToolset.ObjectToolset.SetProperties` or `BlueprintToolsets.BlueprintDslToolset.Edit`.
+2. Start PIE (`EditorToolset.EditorAppToolset.StartPIE`) and verify input response using `InputToolset.InputToolset.ApplyInput` and `AgentFrameworkActions.AgentFrameworkPIERuntimeToolset.CallPIEActorFunction`.

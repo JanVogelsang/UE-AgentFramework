@@ -21,9 +21,9 @@
 .PARAMETER ProjectsRoot
     Directory containing the target game projects. Defaults to "$env:USERPROFILE\Documents\Unreal Projects".
 .EXAMPLE
-    .\build_plugin.ps1 -UEVersion "5.4"
+    .\build_plugin.ps1 -UEVersion "5.9"
 .EXAMPLE
-    .\build_plugin.ps1 -EnginePath "C:\Program Files\Epic Games\UE_5.4" -OutputPath "C:\Builds\AgentFramework"
+    .\build_plugin.ps1 -EnginePath "D:\UE_5.9" -OutputPath "C:\Builds\AgentFramework"
 .EXAMPLE
     .\build_plugin.ps1 -NoZip -TargetProjects "AgentFrameworkTest"
 #>
@@ -65,7 +65,7 @@ if (-not [string]::IsNullOrEmpty($EnginePath)) {
         $SearchVersions += $UEVersion
     } else {
         # Try dynamic lookup first
-        $ParentPaths = @("C:\Program Files\Epic Games", "C:\Program Files (x86)\Epic Games", "D:\Epic Games")
+        $ParentPaths = @("C:\Program Files\Epic Games", "C:\Program Files (x86)\Epic Games", "D:\Epic Games", "D:\")
         foreach ($ParentPath in $ParentPaths) {
             if (Test-Path $ParentPath) {
                 Get-ChildItem -Path $ParentPath -Directory -Filter "UE_5.*" | ForEach-Object {
@@ -75,9 +75,9 @@ if (-not [string]::IsNullOrEmpty($EnginePath)) {
                 }
             }
         }
-        # Add fallback hardcoded list to be safe, including newer versions
-        $SearchVersions += @("5.9", "5.8", "5.7", "5.6", "5.5", "5.4", "5.3", "5.2", "5.1", "5.0")
-        $SearchVersions = $SearchVersions | Select-Object -Unique | Sort-Object -Descending
+        # Add fallback hardcoded list (UE 5.9+)
+        $SearchVersions += @("5.9")
+        $SearchVersions = $SearchVersions | Select-Object -Unique | Sort-Object { [version]$_ } -Descending
     }
 
     foreach ($Ver in $SearchVersions) {
@@ -85,7 +85,8 @@ if (-not [string]::IsNullOrEmpty($EnginePath)) {
         $PathsToTry = @(
             "C:\Program Files\Epic Games\UE_$Ver",
             "C:\Program Files (x86)\Epic Games\UE_$Ver",
-            "D:\Epic Games\UE_$Ver"
+            "D:\Epic Games\UE_$Ver",
+            "D:\UE_$Ver"
         )
         
         # Try registry lookup
@@ -117,16 +118,6 @@ if (-not (Test-Path $RunUAT)) {
     Write-Error "Could not find RunUAT.bat at expected path: '$RunUAT'"
 }
 
-# 1.5. Run C++ Tool Schema Audit
-Write-Host "`nRunning C++ Tool Schema Audit via export_action_schemas.py..." -ForegroundColor Cyan
-$ExportSchemaScript = Join-Path $RepoRoot "UnrealEngine\src\scripts\export_action_schemas.py"
-if (Test-Path $ExportSchemaScript) {
-    python $ExportSchemaScript
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "C++ Tool Schema Audit failed! Missing JSON schemas detected."
-    }
-}
-
 # 2. Clean previous build folders from the plugin
 Write-Host "`nCleaning intermediate and build folders in plugin directory..." -ForegroundColor Cyan
 $FoldersToClean = @("Binaries", "Intermediate", "Saved")
@@ -148,26 +139,37 @@ if (-not [System.IO.Path]::IsPathRooted($OutputPath)) {
 
 $PackagedPluginDir = Join-Path $AbsoluteOutputPath ("AFBuild_" + (Get-Date -Format "HHmmss") + "\AgentFramework")
 if (Test-Path $AbsoluteOutputPath) {
-    Write-Host "`nCleaning existing output directory '$AbsoluteOutputPath'..." -ForegroundColor Cyan
-    # A build that has just finished can still be releasing handles under this directory. Failing
-    # silently here leaves stale files behind and resurfaces much later as an opaque
-    # "Failed to delete directory ...\HostProject" error from UAT, so retry briefly and then stop.
-    $MaxCleanAttempts = 5
-    for ($CleanAttempt = 1; $CleanAttempt -le $MaxCleanAttempts; $CleanAttempt++) {
-        try {
-            Remove-Item -Path $AbsoluteOutputPath -Recurse -Force -ErrorAction Stop
-            break
-        } catch {
-            if ($CleanAttempt -eq $MaxCleanAttempts) {
-                $Remaining = @(Get-ChildItem -Path $AbsoluteOutputPath -Recurse -Force -File -ErrorAction SilentlyContinue |
-                    Select-Object -First 5 -ExpandProperty FullName)
-                foreach ($Item in $Remaining) {
-                    Write-Host "  Still present: $Item" -ForegroundColor Red
+    $TargetsToClean = @(Get-ChildItem -Path $AbsoluteOutputPath -Force -ErrorAction SilentlyContinue |
+        Where-Object {
+            ($_.PSIsContainer -and $_.Name -like "AFBuild_*") -or
+            (-not $_.PSIsContainer -and $_.Name -eq "AgentFramework.zip")
+        })
+    if ($TargetsToClean.Count -gt 0) {
+        Write-Host "`nCleaning previous build artifacts in '$AbsoluteOutputPath'..." -ForegroundColor Cyan
+        # A build that has just finished can still be releasing handles under this directory. Failing
+        # silently here leaves stale files behind and resurfaces much later as an opaque
+        # "Failed to delete directory ...\HostProject" error from UAT, so retry briefly and then stop.
+        $MaxCleanAttempts = 5
+        for ($CleanAttempt = 1; $CleanAttempt -le $MaxCleanAttempts; $CleanAttempt++) {
+            try {
+                foreach ($TargetItem in $TargetsToClean) {
+                    if (Test-Path $TargetItem.FullName) {
+                        Remove-Item -Path $TargetItem.FullName -Recurse -Force -ErrorAction Stop
+                    }
                 }
-                Write-Error "Failed to clean output directory '$AbsoluteOutputPath' after $MaxCleanAttempts attempts: $($_.Exception.Message) Close whatever is holding files under it (an Editor, a stray UnrealBuildTool, or an open file browser) and re-run."
+                break
+            } catch {
+                if ($CleanAttempt -eq $MaxCleanAttempts) {
+                    $Remaining = @(Get-ChildItem -Path $AbsoluteOutputPath -Filter "AFBuild_*" -Recurse -Force -File -ErrorAction SilentlyContinue |
+                        Select-Object -First 5 -ExpandProperty FullName)
+                    foreach ($Item in $Remaining) {
+                        Write-Host "  Still present: $Item" -ForegroundColor Red
+                    }
+                    Write-Error "Failed to clean build artifacts under '$AbsoluteOutputPath' after $MaxCleanAttempts attempts: $($_.Exception.Message) Close whatever is holding files under it (an Editor, a stray UnrealBuildTool, or an open file browser) and re-run."
+                }
+                Write-Host "Clean attempt $CleanAttempt/$MaxCleanAttempts failed; retrying in 2s..." -ForegroundColor Yellow
+                Start-Sleep -Seconds 2
             }
-            Write-Host "Clean attempt $CleanAttempt/$MaxCleanAttempts failed; retrying in 2s..." -ForegroundColor Yellow
-            Start-Sleep -Seconds 2
         }
     }
 }
@@ -179,7 +181,7 @@ if (Test-Path $UbtLogPath) {
     Remove-Item -Path $UbtLogPath -Force -ErrorAction SilentlyContinue
 }
 
-& $RunUAT BuildPlugin -plugin="$UpluginPath" -package="$PackagedPluginDir" -Rocket -NoMutex
+& $RunUAT BuildPlugin -plugin="$UpluginPath" -package="$PackagedPluginDir" -TargetPlatforms=Win64 -Rocket -NoMutex
 if ($LASTEXITCODE -ne 0) {
     Write-Error "BuildPlugin failed with exit code $LASTEXITCODE"
 }

@@ -1,61 +1,48 @@
 ---
 name: pie-verifier
-description: Autonomously run PIE (Play-In-Editor) sessions, navigate UMG/Slate UI, click elements programmatically, and query world actors to verify changes.
----
-# Play-In-Editor (PIE) Verification SOPs
-
-This skill instructs the agent on how to autonomously test game logic, UI navigation, and gameplay systems using a live Play-In-Editor (PIE) session inside the Unreal Editor.
-
-## Available Actions / Tools
-The internal C++ MCP server provides the following tools:
-1. `start_pie_session`: Starts the PIE session. Use `start_mode: "current_camera"` (optional) to spawn at the editor camera location.
-2. `extract_ui_state`: Returns a JSON tree of visible UMG widgets (grouped under `umg`) and raw Slate elements (grouped under `slate`).
-3. `trigger_ui_element`: Accepts `widget_path` (e.g. `WBP_MainMenu_C_0.PlayButton` for UMG, or `slate_sbutton_0` for Slate) to programmatically click or trigger the element.
-4. `query_world_state`: Accepts a list of `classes` (e.g., `["Character", "BP_TargetActor_C"]`), `tags` (optional), and `radius` (optional). Returns the coordinates and metadata of matching actors.
-5. `read_message_log`: Captures the output log. Essential for asserting that no "Accessed None" or critical warnings fired.
-6. `stop_pie_session`: Stops the current running PIE session.
-
+description: Use this skill to autonomously start Play-In-Editor (PIE), inspect live Slate/UMG widgets and runtime world state, inject input or invoke actor UFunctions, and verify gameplay behavior in Unreal Engine 5.9.
 ---
 
-## Standard Verification Workflow
+# Play-In-Editor (PIE) Runtime Verifier (Unreal Engine 5.9)
 
-Follow this loop to verify gameplay changes:
+Always verify gameplay, UI, and AI changes inside a live Play-In-Editor (PIE) session using UE 5.9's native runtime toolsets and `AgentFrameworkActions.AgentFrameworkPIERuntimeToolset` via `/mcp` (`describe_toolsets` + `call_tool`).
 
-### Step 1: Start PIE
-Call the `start_pie_session` tool.
-> [!NOTE]
-> If PIE is already running, the tool will notify you. Use `read_message_log` to ensure no startup asserts occurred.
+## 1. Starting & Stopping PIE (`EditorToolset.EditorAppToolset`)
 
-### Step 2: Extract & Interact with UI
-If the game starts with a UI menu (e.g., a main menu, inventory, or overlay):
-1. Call `extract_ui_state`.
-2. Inspect the `umg` block for the path of the button you want to click (e.g., `WBP_MainMenu_C_0.StartGameButton`).
-3. Call `trigger_ui_element` with that path.
-4. Call `extract_ui_state` again if the screen changed to verify the menu closed or a new menu opened.
+- **Check Status:** Call `EditorToolset.EditorAppToolset.IsPIERunning` to see if a session is already active.
+- **Start PIE:** Call `EditorToolset.EditorAppToolset.StartPIE` to launch Play-In-Editor.
+- **Stop PIE:** Always call `EditorToolset.EditorAppToolset.StopPIE` once verification is complete so assets can be saved and modified cleanly.
 
-### Step 3: Simulate Gameplay Actions
-Use `simulate_input` to move the character or trigger actions (e.g., press `W` to move, `SpaceBar` to jump, or custom keys).
-* Since inputs are processed instantly, call `simulate_input` with `action_type: "down"` to hold a key, wait a moment using your harness's native wait mechanism (e.g. Antigravity's `schedule` tool, or a short bounded shell wait), and then call `action_type: "up"` to release it.
+## 2. Inspecting & Interacting with Live UI (`SlateInspectorToolset.SlateInspectorToolset` & `UMGEditor.UMGDebuggerSubsystem`)
 
-### Step 4: Extract World State
-Call `query_world_state` with specific filters to verify that the gameplay action completed successfully:
-* To check if the player moved: Query the `player` location.
-* To check if an actor was spawned or destroyed: Pass the class name to `classes` and check if it is returned.
-* To check if an interactable object opened: Query the actor's location/properties.
+While PIE is running:
+- **Discover & Inspect Live Widgets (`SlateInspectorToolset.SlateInspectorToolset`):**
+  - `Snapshot` (`Ref`, `MaxDepth`, `bIncludeSourceLocations`) — Capture the live Slate widget hierarchy and element references.
+  - `GetUMGInfo` (`Ref`) — Inspect UMG widget backing metadata for a captured Slate ref.
+  - `Screenshot` (`Ref`) — Capture an image of a widget/window.
+  - `UMGEditor.UMGDebuggerSubsystem` (`StartWidgetLifetimeLogging`, `GetWidgetLifetimeLogStatus`, `GetWidgetLifetimeEvents`, `StopWidgetLifetimeLogging`) — Record widget Constructed/Destructed/Rebuilt/Invalidated events during PIE.
+- **Simulate UI Interaction (`SlateInspectorToolset.SlateInspectorToolset`):**
+  - `Click` (`Ref`, `Params`), `Hover` (`Ref`, `Params`), `HitTest` (`Ref`, `Params`), `Scroll` (`Ref`, `Params`)
+  - `Type` (`Ref`, `Text`, `Submit`), `PressKey` (`Key`, `UserIndex`, `RepeatCount`), `Focus` (`Ref`, `UserIndex`), `SelectOption` (`Ref`, `Value`), `Drag` (`StartRef`, `EndRef`, `Params`), `WaitFor` (`Text`, `TextGone`)
+  - Call `LastRefusal` if an interaction fails to diagnose why a widget could not be clicked/focused.
 
-### Step 5: Read Log for Failures
-Call `read_message_log` to check for runtime errors (like Blueprint compiler issues, null pointers, or failed casts) that occurred during play.
+## 3. Simulating Player Input (`InputToolset.InputToolset`)
 
-### Step 6: End PIE
-Call `stop_pie_session` when the verification completes.
+- **Inject Enhanced Input / Keys:**
+  - Call `InputToolset.InputToolset.ApplyInput` (`Entries` array targeting either `Action` or `Key` + `Value` vector, and `DurationSeconds`) to drive Enhanced Input actions or legacy keys on the active PIE local player.
+  - Call `InputToolset.InputToolset.IsInputApplied` (`Entries`) to verify active key state.
 
----
+## 4. Invoking Live PIE Actor Functions (`AgentFrameworkActions.AgentFrameworkPIERuntimeToolset`)
 
-## Best Practices
-* **Filter Queries:** Always specify `classes` or `tags` when calling `query_world_state` to keep the context clean and avoid exceeding token limits.
-* **Wait for Loading:** Give the engine 1-2 seconds after map loads or starting PIE before expecting widgets to be drawn or actors to fully possess.
-* **Dynamic Path Lookup:** Do not hardcode button paths across different maps. Always call `extract_ui_state` first to discover the exact widget instance names (e.g., widget instances might end with `_C_0`, `_C_1`, etc.).
-* **Progression State Validation:** If main menu or game flow buttons are unexpectedly disabled (e.g., Singleplayer button greyed out), verify that required progression registries (like `DA_ProgressionRegistry`) have valid starting unlocks (e.g., Capital Ships) registered.
-* **Save-Game Isolation:** When testing run-based or roguelite game modes (e.g. Singleplayer Challenges), check for and isolate persistent save games (`Saved/SaveGames/*.sav`). Stale save games often trigger modal overwrite confirmation dialogs (`UAsyncAction_ShowConfirmation`) that intercept automated input.
-* **Hold-to-Activate Inputs:** For buttons or input actions that require holding (e.g. `IA_StartRound`), use `simulate_input` with `action_type: "down"`, wait the required hold duration using the native `schedule` tool, and then send `action_type: "up"`. Alternatively, check if the screen provides a direct debug bypass method (e.g., `DebugStartRound()`).
+Use `AgentFrameworkActions.AgentFrameworkPIERuntimeToolset.CallPIEActorFunction` to execute `BlueprintCallable` or `Exec` `UFunction`s on actors (or components) running inside the live PIE world (`GEditor->PlayWorld`):
+- **`CallPIEActorFunction`**:
+  - `ActorIdentifier` — Matches actor name or actor label in the active PIE world.
+  - `FunctionName` — Target `UFunction` on the actor (or attached component).
+  - Optional `ParametersJson` — JSON object mapping parameter names to values.
+  - Returns `FAgentFrameworkPIEFunctionResult` (`ActorName`, `ActorLabel`, `ActorClass`, `FunctionName`, `ReturnValueJson`, `OutParametersJson`).
+- Use `EditorToolset.LevelToolset.FindActors` and `EditorToolset.ObjectToolset.GetProperties` for level actor discovery and property reads.
 
+## 5. Checking Runtime Logs & Visuals (`ConsoleToolset.LogsToolset` & `SceneCaptureToolset.SceneCaptureToolset`)
+
+- **Runtime Logs (`ConsoleToolset.LogsToolset`):** Call `GetLogEntries` (`LogCategory`, `Pattern`, `MaxEntries`, `LogFilePath`, `MaxCharsPerEntry`) or `GetLogCategories` to confirm no script errors or failed assertions occurred (`LogBlueprintUserMessages`, `LogTemp`, `LogAbilitySystem`, etc.).
+- **Visual Capture (`SceneCaptureToolset.SceneCaptureToolset` & `EditorToolset.EditorAppToolset`):** Call `SceneCaptureToolset.SceneCaptureToolset.CaptureGameViewport` (`World`, `MaxResolution`), `SceneCaptureToolset.SceneCaptureToolset.CaptureActiveEditorView`, or `EditorToolset.EditorAppToolset.CaptureEditorImage` when visual confirmation is helpful.

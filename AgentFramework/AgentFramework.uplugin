@@ -1,29 +1,95 @@
 {
 	"FileVersion": 3,
-	"Version": 1,
-	"VersionName": "1.1.0",
-	"FriendlyName": "AgentFramework",
-	"Description": "Production-grade AI-driven editor plugin that uses Antigravity 2.0, Claude Code, Kilo Code, and OpenAI Codex to autonomously create, modify, and manage entire Unreal Engine game projects.",
-	"Category": "Editor",
-	"CreatedBy": "AgentFramework",
-	"CreatedByURL": "",
-	"DocsURL": "",
+	"Version": 2,
+	"VersionName": "2.0.0",
+	"FriendlyName": "AgentFramework AI Assistant",
+	"Description": "Unreal Engine 5.9 Agentic AI extension plugin providing 6 native ToolsetRegistry toolsets for C++ scaffolding and reflection, project packaging and lighting builds, Enhanced Input authoring, Animation/IKRig/Motion Matching authoring, GAS AttributeSet/GameplayEffect authoring, and PIE actor UFunction invocation alongside UE 5.9's built-in ModelContextProtocol server.",
+	"Category": "AI",
+	"CreatedBy": "AgentFramework Contributors",
+	"CreatedByURL": "https://github.com/your-org/UE-AgentFramework",
+	"DocsURL": "https://github.com/your-org/UE-AgentFramework/wiki",
 	"MarketplaceURL": "",
-	"FabURL": "",
-	"SupportURL": "",
-	"CanContainContent": true,
+	"SupportURL": "https://github.com/your-org/UE-AgentFramework/issues",
+	"CanContainContent": false,
 	"IsBetaVersion": false,
 	"IsExperimentalVersion": false,
 	"Installed": false,
-	"EnabledByDefault": true,
+	"EngineVersion": "5.9.0",
+	"Modules": [
+		{
+			"Name": "AgentFrameworkCore",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64",
+				"Linux",
+				"Mac"
+			]
+		},
+		{
+			"Name": "AgentFrameworkActions",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit",
+			"PlatformAllowList": [
+				"Win64",
+				"Linux",
+				"Mac"
+			]
+		}
+	],
 	"Plugins": [
 		{
-			"Name": "EditorScriptingUtilities",
+			"Name": "ModelContextProtocol",
 			"Enabled": true
 		},
 		{
-			"Name": "EnhancedInput",
+			"Name": "ToolsetRegistry",
 			"Enabled": true
+		},
+		{
+			"Name": "AllToolsets",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "GeometryToolset",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "KnowledgeBaseToolset",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "SequencerAnimMixerToolset",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "AIAssistant",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "AgentCapability",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "AgentLook",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "EditorScriptingUtilities",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "EnhancedInput",
+			"Enabled": true,
+			"Optional": true
 		},
 		{
 			"Name": "PythonScriptPlugin",
@@ -31,36 +97,7 @@
 			"Optional": true
 		},
 		{
-			"Name": "DataValidation",
-			"Enabled": true
-		},
-		{
 			"Name": "GameplayAbilities",
-			"Enabled": true,
-			"Optional": true
-		},
-		{
-			"Name": "Niagara",
-			"Enabled": true,
-			"Optional": true
-		},
-		{
-			"Name": "PoseSearch",
-			"Enabled": true,
-			"Optional": true
-		},
-		{
-			"Name": "IKRig",
-			"Enabled": true,
-			"Optional": true
-		},
-		{
-			"Name": "ControlRig",
-			"Enabled": true,
-			"Optional": true
-		},
-		{
-			"Name": "MotionWarping",
 			"Enabled": true,
 			"Optional": true
 		},
@@ -69,101 +106,30 @@
 			"Enabled": true,
 			"Optional": true
 		},
-
-		{
-			"Name": "MassGameplay",
-			"Enabled": true
-		},
-		{
-			"Name": "MassCrowd",
-			"Enabled": true
-		},
 		{
 			"Name": "SmartObjects",
 			"Enabled": true,
 			"Optional": true
 		},
 		{
-			"Name": "PCG",
+			"Name": "MassGameplay",
 			"Enabled": true,
 			"Optional": true
 		},
 		{
-			"Name": "GeometryScripting",
+			"Name": "MassCrowd",
 			"Enabled": true,
 			"Optional": true
 		},
 		{
-			"Name": "MovieRenderPipeline",
+			"Name": "UnrealCanvasAnnotations",
 			"Enabled": true,
 			"Optional": true
 		},
 		{
-			"Name": "Metasound",
+			"Name": "UnrealCanvasBridge",
 			"Enabled": true,
 			"Optional": true
-		},
-		{
-			"Name": "AudioModulation",
-			"Enabled": true,
-			"Optional": true
-		},
-		{
-			"Name": "nDisplay",
-			"Enabled": true,
-			"Optional": true
-		},
-		{
-			"Name": "LiveLink",
-			"Enabled": true,
-			"Optional": true
-		},
-		{
-			"Name": "DMXEngine",
-			"Enabled": true,
-			"Optional": true
-		},
-		{
-			"Name": "VirtualCameraCore",
-			"Enabled": true,
-			"Optional": true
-		},
-		{
-			"Name": "CineCameraRigs",
-			"Enabled": true,
-			"Optional": true
-		},
-		{
-			"Name": "StageMonitoring",
-			"Enabled": true,
-			"Optional": true
-		},
-		{
-			"Name": "ChaosVehiclesPlugin",
-			"Enabled": true,
-			"Optional": true
-		},
-		{
-			"Name": "PixelStreaming",
-			"Enabled": true,
-			"Optional": true
-		}
-	],
-	"Modules": [
-		{
-			"Name": "AgentFrameworkCore",
-			"Type": "Editor",
-			"LoadingPhase": "Default"
-		},
-		{
-			"Name": "AgentFrameworkEngine",
-			"Type": "Editor",
-			"LoadingPhase": "Default"
-		},
-		{
-			"Name": "AgentFrameworkActions",
-			"Type": "Editor",
-			"LoadingPhase": "Default"
 		}
 	]
 }

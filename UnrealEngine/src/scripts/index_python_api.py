@@ -30,8 +30,9 @@ def find_python_stub_path() -> Path:
         REPO_ROOT.parent / "AgentFrameworkTest" / "Intermediate" / "PythonStub",
         projects_dir / "AgentFrameworkTest" / "Intermediate" / "PythonStub",
         REPO_ROOT / "Intermediate" / "PythonStub",
-        Path("C:/Program Files/Epic Games/UE_5.8/Engine/Intermediate/PythonStub"),
-        Path("C:/Program Files/Epic Games/UE_5.7/Engine/Intermediate/PythonStub")
+        Path("D:/UE_5.9/Engine/Intermediate/PythonStub"),
+        Path("C:/Program Files/Epic Games/UE_5.9/Engine/Intermediate/PythonStub"),
+        Path("D:/Epic Games/UE_5.9/Engine/Intermediate/PythonStub"),
     ]
     
     # Also scan any subfolders in Unreal Projects
@@ -107,6 +108,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Index Unreal Engine Python API stubs into ChromaDB.")
     parser.add_argument("--stub-path", type=str, help="Path to unreal.pyi or unreal.py stub file.")
+    parser.add_argument("--ue-version", type=str, default="5.9", help="Unreal Engine version (default: 5.9).")
     args = parser.parse_args()
     
     stub_path = Path(args.stub_path) if args.stub_path else find_python_stub_path()
@@ -114,7 +116,7 @@ def main():
         logger.error("Could not locate unreal.pyi or unreal.py stub file. Ensure Unreal Engine Editor has run with PythonScriptPlugin enabled.")
         sys.exit(1)
         
-    ue_version = "5.8"
+    ue_version = args.ue_version
     vector_db_dir = REPO_ROOT / "UnrealEngine" / "ExternalServer" / f"vector_db_{ue_version}"
     logger.info(f"Initializing vector store at {vector_db_dir}...")
     

@@ -1,5 +1,7 @@
 # UE-AgentFramework Benchmark Comparison Report: Baseline vs Post-Optimization
 
+> **Historical Record (`v1.1.0-ue5.8`):** This benchmark report was recorded against the pre-5.9 standalone HTTP server architecture (`AgentFrameworkHttpServer.cpp`, `v1.1.0-ue5.8`). On `main` (`v2.0.0` for Unreal Engine 5.9), tool discovery and execution run through UE 5.9's native `ModelContextProtocol` (`/mcp`, port `8000`) and `UToolsetDefinition` registry.
+
 ## Executive Summary
 
 Following the implementation of 5 core plugin optimizations across `UE-AgentFramework`, a complete post-optimization audit of the 42-task Unreal Engine benchmark suite was executed.

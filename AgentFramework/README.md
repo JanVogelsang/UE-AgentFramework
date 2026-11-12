@@ -1,20 +1,31 @@
-# AgentFramework Unreal Engine Plugin
+# AgentFramework Unreal Engine Plugin (v2.0.0 for UE 5.9)
 
-This is the Unreal Engine plugin component of the **UE-AgentFramework** integration. It exposes an in-process HTTP loopback server (listening on port `18777` by default, configurable via `-AgentFrameworkPort=` or `AGENTFRAMEWORK_HTTP_PORT`) to execute commands safely on the Game Thread, allowing the AgentFramework AI coding assistant to natively interact with your Unreal Editor.
+This is the Unreal Engine plugin component of **UE-AgentFramework** for **Unreal Engine 5.9**. It integrates with UE 5.9's built-in `ModelContextProtocol` Streamable HTTP server (`http://127.0.0.1:8000/mcp`) and `ToolsetRegistry`, extending UE 5.9's native editor toolsets with 6 complementary native `UToolsetDefinition` classes under `AgentFrameworkActions`:
 
-*(Note: The MCP servers that communicate with the AI assistant, including the C++ Bridge and the External Python AST Server, are located in the `UnrealEngine` directory of this repository.)*
+- `UAgentFrameworkCppToolset` (`AgentFrameworkActions.AgentFrameworkCppToolset`)
+- `UAgentFrameworkBuildToolset` (`AgentFrameworkActions.AgentFrameworkBuildToolset`)
+- `UAgentFrameworkEnhancedInputAuthoringToolset` (`AgentFrameworkActions.AgentFrameworkEnhancedInputAuthoringToolset`)
+- `UAgentFrameworkAnimationAuthoringToolset` (`AgentFrameworkActions.AgentFrameworkAnimationAuthoringToolset`)
+- `UAgentFrameworkGASAuthoringToolset` (`AgentFrameworkActions.AgentFrameworkGASAuthoringToolset`)
+- `UAgentFrameworkPIERuntimeToolset` (`AgentFrameworkActions.AgentFrameworkPIERuntimeToolset`)
+
+> **Engine Compatibility:**
+> - **Unreal Engine 5.9:** Supported by `main` (`v2.0.0`).
+> - **Unreal Engine 5.7 / 5.8:** Check out git tag `v1.1.0-ue5.8` (`git checkout v1.1.0-ue5.8`) for the pre-5.9 standalone HTTP loopback server architecture.
+
+*(Note: The MCP stdio bridge and External Python AST/RAG Server are located in the `../UnrealEngine` directory of this repository.)*
 
 ## Installation
 
-1. Create a `Plugins` directory at the root of your Unreal Engine project if it doesn't already exist.
+1. Create a `Plugins` directory at the root of your Unreal Engine 5.9 project if it doesn't already exist.
 2. Copy this `AgentFramework` folder inside your project's `Plugins` directory:
    ```
    YourProject/
    ├── Plugins/
    │   └── AgentFramework/
    ```
-3. Open your project in Unreal Editor. If prompted to rebuild missing modules, click **Yes**.
-4. Make sure the plugin is enabled in **Edit > Plugins**.
+3. Open your project in Unreal Editor 5.9. If prompted to rebuild missing modules, click **Yes**.
+4. Make sure **AgentFramework** (alongside UE 5.9's required **ModelContextProtocol** and **ToolsetRegistry** plugins) is enabled in **Edit > Plugins**.
 
 ---
 
@@ -27,32 +38,33 @@ To distribute the plugin or upload it to Epic's **Fab** marketplace, it needs to
 1. Open PowerShell at the repository root.
 2. Run the build script:
    ```powershell
-   .\build_plugin.ps1 -UEVersion "5.8"
+   $env:uebp_UATMutexNoWait = '1'
+   powershell -ExecutionPolicy Bypass -File .\build_plugin.ps1 -UEVersion "5.9"
    ```
-   *Replace `"5.8"` with your installed Unreal Engine version (e.g., `"5.7"`, `"5.8"`).*
+   *(Pass `-NoZip` when iterating locally without generating `Packaged/AgentFramework.zip`.)*
 
 This script will:
-- Clean any previous `Binaries/`, `Intermediate/`, and `Saved/` folders.
-- Use the **Unreal Automation Tool (UAT)** with the `-Rocket` parameter to compile and build the plugin for all target platforms.
-- Create a packaged folder in the `Packaged/AgentFramework` directory.
-- Zip the folder into `Packaged/AgentFramework.zip` for marketplace upload.
+- Clean any previous `Binaries/`, `Intermediate/`, and `Saved/` folders inside `AgentFramework/`.
+- Use the **Unreal Automation Tool (UAT)** with `-Rocket` to compile and package the plugin against Unreal Engine 5.9.
+- Create a staged build folder in `Packaged/AFBuild_<timestamp>/AgentFramework` and copy binaries into configured target projects (`-TargetProjects`).
+- Zip the staged plugin into `Packaged/AgentFramework.zip` for distribution unless `-NoZip` is specified.
 
 ### Customizing Paths
 
-If your Unreal Engine is installed in a custom location, use the `-EnginePath` parameter:
+If Unreal Engine 5.9 is installed in a custom location, use `-EnginePath`:
 ```powershell
-.\build_plugin.ps1 -EnginePath "D:\CustomPath\UE_5.4"
+powershell -ExecutionPolicy Bypass -File .\build_plugin.ps1 -EnginePath "D:\CustomPath\UE_5.9"
 ```
 
 ---
 
 ## Distribution on Fab Marketplace
 
-Once the build finishes successfully, you can upload `Packaged/AgentFramework.zip` to the Fab portal:
+Once the build finishes successfully without `-NoZip`, you can upload `Packaged/AgentFramework.zip` to the Fab portal:
 
 1. **Log in**: Sign in to the [Fab Publisher Portal](https://publisher.fab.com/).
 2. **Add Product**: Create or edit your product listing. Set the type to **Unreal Engine Plugin**.
-3. **Add Version**: In the *Versions* tab, create a new version (e.g., `1.1.0` matching `VersionName` in `AgentFramework.uplugin`).
+3. **Add Version**: In the *Versions* tab, create a new version (e.g., `2.0.0` matching `VersionName` in `AgentFramework.uplugin`).
 4. **Upload Package**: Upload `Packaged/AgentFramework.zip` (it contains the required root `AgentFramework/` folder with `.uplugin` and source files).
-5. **Metadata**: Specify supported engine versions (e.g. `5.3-5.5`) and platforms, then click **Submit for Review**.
+5. **Metadata**: Specify Unreal Engine `5.9` and supported platforms (`Win64`, `Linux`, `Mac`), then click **Submit for Review**.
 

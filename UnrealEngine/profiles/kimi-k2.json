@@ -1,52 +1,5 @@
 {
   "image_support": false,
-  "disabled_tools": [
-    "capture_widget",
-    "capture_viewport",
-    "capture_niagara_system_isolated"
-  ],
-  "tool_overrides": {
-    "execute_python_script": {
-      "description": "Execute a Python script. WARNING: This tool is a last resort. Do NOT use this tool if a native tool or dedicated skill exists. You must provide a detailed justification. / 执行 Python 脚本。警告：此工具是最后手段。如果存在原生工具或专用技能，请勿使用此工具。您必须提供详细的理由。",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "reasoning_step": {
-            "type": "string",
-            "description": "Explain what you are trying to achieve before writing the code. / 在编写代码之前解释你想要实现的目标。"
-          },
-          "justification_why_native_tools_or_skills_are_insufficient": {
-            "type": "string",
-            "description": "Detailed explanation of why specific native tools or dedicated skills cannot be used. / 详细解释为什么不能使用特定的原生工具或专用技能。"
-          },
-          "script": {
-            "type": "string",
-            "description": "The exact Python code to execute. / 要执行的确切 Python 代码。"
-          }
-        },
-        "required": ["reasoning_step", "justification_why_native_tools_or_skills_are_insufficient", "script"]
-      }
-    },
-    "execute_batch_blueprint_operations": {
-      "description": "Batch multiple Blueprint modifications in a single transaction. / 在单次事务中批量处理多个蓝图修改。 Plan your node injection and connections thoroughly before emitting the array. / 在提交数组之前彻底计划节点注入和连接。",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "reasoning_step": {
-            "type": "string",
-            "description": "Step-by-step plan of which nodes to add and how they connect. / 逐步计划要添加哪些节点以及它们如何连接。"
-          },
-          "blueprint_path": {
-            "type": "string",
-            "description": "The internal Unreal asset path to the Blueprint. / 蓝图的内部 Unreal 资产路径。"
-          },
-          "operations": {
-            "type": "array",
-            "description": "Array of operation objects. / 操作对象数组。"
-          }
-        },
-        "required": ["reasoning_step", "blueprint_path", "operations"]
-      }
-    }
-  }
+  "disabled_tools": [],
+  "tool_overrides": {}
 }

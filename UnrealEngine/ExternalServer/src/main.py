@@ -43,19 +43,86 @@ REPO_ROOT = SERVER_DIR.parent.parent
 fallback_base = REPO_ROOT.parent / "AgentFrameworkTest"
 if not fallback_base.exists():
     user_profile = os.environ.get("USERPROFILE", "")
-    if user_profile:
-        fallback_base = Path(user_profile) / "Documents" / "Unreal Projects" / "AgentFrameworkTest"
-    else:
-        fallback_base = Path("c:/Users") / os.getlogin() / "Documents" / "Unreal Projects" / "AgentFrameworkTest"
+    home_dir = Path(user_profile) if user_profile else Path.home()
+    fallback_base = home_dir / "Documents" / "Unreal Projects" / "AgentFrameworkTest"
 
 PROJECT_UPROJECT = fallback_base / "AgentFrameworkTest.uproject"
 COMPILE_COMMANDS_PATH = fallback_base / "compile_commands.json"
 WATCH_DIR = fallback_base / "Source"
 
+
+def _read_uproject_engine_association() -> Optional[str]:
+    try:
+        if PROJECT_UPROJECT and PROJECT_UPROJECT.exists():
+            with open(PROJECT_UPROJECT, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            assoc = data.get("EngineAssociation")
+            if assoc:
+                return str(assoc).strip()
+    except Exception:
+        pass
+    return None
+
+
+def _lookup_unreal_engine_by_association(assoc: str) -> Optional[Path]:
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for builds_subkey in (
+            r"SOFTWARE\Epic Games\Unreal Engine\Builds",
+            r"SOFTWARE\EpicGames\Unreal Engine\Builds",
+        ):
+            try:
+                with winreg.OpenKey(hive, builds_subkey) as key:
+                    val, _ = winreg.QueryValueEx(key, assoc)
+                    if val and os.path.exists(val):
+                        return Path(val)
+            except WindowsError:
+                pass
+
+    ver_match = re.search(r"(\d+\.\d+)", assoc)
+    ver = ver_match.group(1) if ver_match else assoc
+    for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        for root_key in (
+            rf"SOFTWARE\EpicGames\Unreal Engine\{ver}",
+            rf"SOFTWARE\Epic Games\Unreal Engine\{ver}",
+        ):
+            try:
+                with winreg.OpenKey(hive, root_key) as key:
+                    ue_dir, _ = winreg.QueryValueEx(key, "InstalledDirectory")
+                    if ue_dir and os.path.exists(ue_dir):
+                        return Path(ue_dir)
+            except WindowsError:
+                pass
+
+    for candidate in (
+        Path(rf"D:\UE_{ver}"),
+        Path(rf"C:\Program Files\Epic Games\UE_{ver}"),
+        Path(rf"D:\Epic Games\UE_{ver}"),
+    ):
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def find_unreal_engine_dir() -> Optional[Path]:
     """
-    Attempts to discover the Unreal Engine installation directory dynamically using the Windows Registry.
+    Attempts to discover the active Unreal Engine 5.9+ installation directory dynamically,
+    preferring the target project's .uproject EngineAssociation before falling back.
     """
+    assoc = _read_uproject_engine_association()
+    if assoc:
+        resolved = _lookup_unreal_engine_by_association(assoc)
+        if resolved:
+            return resolved
+
+    # Fallback: check UE 5.9 standard paths
+    for p in [
+        Path(r"D:\UE_5.9"),
+        Path(r"C:\Program Files\Epic Games\UE_5.9"),
+        Path(r"D:\Epic Games\UE_5.9"),
+    ]:
+        if p.exists():
+            return p
+
     for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
         for subkey in (
             r"SOFTWARE\EpicGames\Unreal Engine",
@@ -92,16 +159,6 @@ def find_unreal_engine_dir() -> Optional[Path]:
                             i += 1
             except WindowsError:
                 pass
-    # Hardcoded fallbacks
-    for p in [
-        Path(r"C:\Program Files\Epic Games\UE_5.8"),
-        Path(r"D:\UE_5.8"),
-        Path(r"D:\UE_5.7"),
-        Path(r"C:\Program Files\Epic Games\UE_5.7"),
-        Path(r"C:\Program Files\Epic Games\UE_5.6")
-    ]:
-        if p.exists():
-            return p
     return None
 
 def resolve_project_paths():
@@ -280,7 +337,7 @@ def resolve_and_load_libclang():
     fallbacks = [
         Path(r"C:\Program Files\LLVM\bin\libclang.dll"),
         Path(r"C:\Program Files (x86)\LLVM\bin\libclang.dll"),
-        Path(r"D:\UE_5.7\Engine\Binaries\ThirdParty\IWYU\libclang.dll"),
+        Path(r"D:\UE_5.9\Engine\Binaries\ThirdParty\IWYU\libclang.dll"),
     ]
     candidates.extend(fallbacks)
 
@@ -1474,17 +1531,6 @@ def start_watcher(loop=None):
         else:
             logger.warning(f"Watchdog directory does not exist: {WATCH_DIR}")
             
-        try:
-            content_dir = PROJECT_UPROJECT.parent / "Content"
-            if content_dir.exists():
-                uasset_handler = UAssetHandler()
-                observer.schedule(uasset_handler, path=str(content_dir), recursive=True)
-                logger.info(f"Watchdog observer scheduled on Content directory: {content_dir}")
-            else:
-                logger.warning(f"Content directory does not exist: {content_dir}")
-        except Exception as e:
-            logger.error(f"Failed to schedule Content directory observer: {e}")
-            
         observer.start()
         logger.info("Watchdog observers started.")
     except Exception as e:
@@ -1696,7 +1742,7 @@ async def generate_compile_commands() -> str:
     if ue_dir:
         ubt_path = str(ue_dir / "Engine" / "Binaries" / "DotNET" / "UnrealBuildTool" / "UnrealBuildTool.exe")
     else:
-        ubt_path = r"D:\UE_5.7\Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.exe"
+        ubt_path = r"D:\UE_5.9\Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.exe"
         
     project_path = str(PROJECT_UPROJECT)
     output_dir = str(PROJECT_UPROJECT.parent)
@@ -1731,9 +1777,17 @@ async def generate_compile_commands() -> str:
     except Exception as e:
         return f"Result of generate_compile_commands: failed with exception {str(e)}"
 
-def check_and_reload_vector_db():
+def _import_vector_store():
     try:
         from ExternalServer.src import vector_store
+    except ImportError:
+        import vector_store
+    return vector_store
+
+
+def check_and_reload_vector_db():
+    try:
+        vector_store = _import_vector_store()
         ue_version = get_unreal_version()
         loaded_version = vector_store.get_loaded_version()
         if loaded_version is not None and loaded_version != ue_version:
@@ -1751,389 +1805,6 @@ async def search_vector_db(query: str) -> str:
     check_and_reload_vector_db()
     return await asyncio.to_thread(_search_vector_db_sync, query)
 
-import urllib.request
-import urllib.error
-
-@mcp.tool()
-async def search_similar_blueprints(query: str, n_results: int = 3) -> str:
-    """
-    Performs semantic search queries against the local blueprints vector database.
-    Use this to find relevant Blueprint assets based on a description of their logic or purpose.
-    """
-    check_and_reload_vector_db()
-    def _search():
-        try:
-            from ExternalServer.src import vector_store
-            results = vector_store.search_similar_blueprints(query, n_results)
-            if not results:
-                return f"Result of search_similar_blueprints for '{query}': No matches found."
-            return f"Result of search_similar_blueprints for '{query}':\n" + json.dumps(results, indent=2)
-        except Exception as e:
-            return f"Error: {e}"
-    return await asyncio.to_thread(_search)
-
-@mcp.tool()
-async def format_t3d_layout(t3d_text: str) -> str:
-    """
-    Parse a T3D text block representing Blueprint nodes, calculate a clean,
-    non-overlapping grid layout (placing execution flows left-to-right and 
-    data dependencies stacked vertically to the left), and return the 
-    formatted T3D text with updated NodePosX and NodePosY coordinates.
-    Use this BEFORE calling inject_blueprint_nodes_t3d to beautify node layouts.
-    """
-    if not t3d_text or not t3d_text.strip():
-        return t3d_text
-
-    import re
-
-    lines = t3d_text.splitlines()
-    nodes = []
-    current_node = None
-    depth = 0
-
-    # Step 1: Parse top-level node blocks
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("Begin Object"):
-            depth += 1
-            if depth == 1:
-                name_match = re.search(r'Name="([^"]+)"', line)
-                node_name = name_match.group(1) if name_match else f"Node_{len(nodes)}"
-                current_node = {
-                    "start_line": i,
-                    "end_line": -1,
-                    "name": node_name,
-                    "class": line,
-                    "links": [],
-                }
-        elif stripped.startswith("End Object"):
-            if depth == 1 and current_node:
-                current_node["end_line"] = i
-                nodes.append(current_node)
-                current_node = None
-            depth = max(0, depth - 1)
-
-        if depth >= 1 and current_node:
-            if "LinkedTo=" in line:
-                if 'Direction="EGPD_Output"' in line or 'Direction="EGPD_Input"' not in line:
-                    matches = re.findall(r'LinkedTo=\(([^ ")]+)', line)
-                    for target in matches:
-                        current_node["links"].append(target)
-
-    if not nodes:
-        return t3d_text
-
-    # Step 2: Calculate topological rank or grid position for nodes
-    name_to_node = {n["name"]: n for n in nodes}
-    in_degree = {n["name"]: 0 for n in nodes}
-    adj = {n["name"]: [] for n in nodes}
-
-    for n in nodes:
-        for target in n["links"]:
-            target_name = target.split()[0]
-            if target_name in name_to_node and target_name != n["name"]:
-                adj[n["name"]].append(target_name)
-                in_degree[target_name] += 1
-
-    rank = {n["name"]: 0 for n in nodes}
-    queue = [name for name, deg in in_degree.items() if deg == 0]
-    visited = set()
-
-    while queue:
-        curr = queue.pop(0)
-        visited.add(curr)
-        curr_rank = rank[curr]
-        for neighbor in adj[curr]:
-            rank[neighbor] = max(rank[neighbor], curr_rank + 1)
-            in_degree[neighbor] -= 1
-            if in_degree[neighbor] == 0:
-                queue.append(neighbor)
-
-    for n in nodes:
-        if n["name"] not in visited:
-            rank[n["name"]] = 0
-
-    rank_groups = {}
-    for n in nodes:
-        r = rank[n["name"]]
-        rank_groups.setdefault(r, []).append(n)
-
-    X_SPACING = 350
-    Y_SPACING = 200
-    START_X = 100
-    START_Y = 100
-
-    node_pos = {}
-    for r in sorted(rank_groups.keys()):
-        group = rank_groups[r]
-        for row_idx, n in enumerate(group):
-            pos_x = START_X + r * X_SPACING
-            pos_y = START_Y + row_idx * Y_SPACING
-            node_pos[n["name"]] = (pos_x, pos_y)
-
-    # Step 3: Reconstruct lines with updated NodePosX and NodePosY
-    new_lines = list(lines)
-    for n in sorted(nodes, key=lambda x: x["start_line"], reverse=True):
-        pos_x, pos_y = node_pos[n["name"]]
-        start = n["start_line"]
-        end = n["end_line"]
-
-        has_x = False
-        has_y = False
-        for idx in range(start, end + 1):
-            line_str = new_lines[idx]
-            if re.match(r'^\s*NodePosX=', line_str):
-                indent = line_str[:len(line_str) - len(line_str.lstrip())]
-                new_lines[idx] = f"{indent}NodePosX={pos_x}"
-                has_x = True
-            elif re.match(r'^\s*NodePosY=', line_str):
-                indent = line_str[:len(line_str) - len(line_str.lstrip())]
-                new_lines[idx] = f"{indent}NodePosY={pos_y}"
-                has_y = True
-
-        insert_lines = []
-        if not has_x:
-            insert_lines.append(f"   NodePosX={pos_x}")
-        if not has_y:
-            insert_lines.append(f"   NodePosY={pos_y}")
-
-        if insert_lines:
-            new_lines[start + 1:start + 1] = insert_lines
-
-    return "\n".join(new_lines)
-
-# --- Blueprint Sync Helpers ---
-def get_unreal_port_sync() -> int:
-    env_port = os.environ.get("UNREAL_HTTP_PORT")
-    if env_port:
-        try:
-            return int(env_port)
-        except ValueError:
-            pass
-    return 18777
-
-def check_ue_server_online_sync(port: int) -> bool:
-    try:
-        url = f"http://127.0.0.1:{port}/api/tools"
-        req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=2) as response:
-            return response.status == 200
-    except Exception:
-        return False
-
-def is_likely_blueprint(filepath: str) -> bool:
-    path = Path(filepath)
-    name = path.name.lower()
-    if name.startswith("bp_") or name.startswith("wbp_") or name.startswith("abp_"):
-        return True
-    parts = [p.lower() for p in path.parts]
-    if any(x in parts for x in ("blueprints", "ui", "widgets", "characters", "actors")):
-        return True
-    return False
-
-def editor_token_sync(port: int) -> Optional[str]:
-    """Per-launch token from Saved/AgentFramework/endpoint.json when it names this port; None for older editors."""
-    try:
-        with open(Path.cwd() / "Saved" / "AgentFramework" / "endpoint.json") as f:
-            endpoint = json.load(f)
-        if int(endpoint.get("port", 0)) == port:
-            return endpoint.get("token") or None
-    except Exception:
-        pass
-    return None
-
-def sync_single_blueprint_sync_worker(filepath: str, asset_path: str, mtime: float, port: int) -> bool:
-    url = f"http://127.0.0.1:{port}/api/execute_tool"
-    payload = json.dumps({"tool_name": "export_blueprint_summary", "parameters": {"asset_path": asset_path}}).encode('utf-8')
-    headers = {'Content-Type': 'application/json'}
-    token = editor_token_sync(port)
-    if token:
-        headers['X-AgentFramework-Token'] = token
-    req = urllib.request.Request(url, data=payload, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=15) as response:
-            resp_data = json.loads(response.read().decode('utf-8'))
-    except Exception as e:
-        logger.debug(f"Failed to fetch BSF for {asset_path} (UE server offline?): {e}")
-        return False
-        
-    if not resp_data or not resp_data.get("bSuccess"):
-        return False
-        
-    bsf_json_str = resp_data.get("ResultMessage", "{}")
-    if not bsf_json_str:
-        return False
-        
-    try:
-        json_data = json.loads(bsf_json_str)
-        from ExternalServer.src import vector_store
-        return vector_store.upsert_blueprint(asset_path, json_data, mtime)
-    except Exception as e:
-        logger.error(f"Error parsing BSF JSON for {asset_path}: {e}")
-        return False
-
-def sync_single_blueprint_sync(filepath: str) -> bool:
-    def worker():
-        try:
-            content_dir = PROJECT_UPROJECT.parent / "Content"
-            rel_path = Path(filepath).relative_to(content_dir)
-            asset_name = rel_path.with_suffix("").as_posix()
-            asset_path = f"/Game/{asset_name}"
-            mtime = os.path.getmtime(filepath)
-            port = get_unreal_port_sync()
-            sync_single_blueprint_sync_worker(filepath, asset_path, mtime, port)
-        except Exception as e:
-            logger.error(f"Error live-syncing blueprint {filepath}: {e}")
-
-    threading.Thread(target=worker, daemon=True).start()
-    return True
-
-def delete_single_blueprint_sync(filepath: str) -> bool:
-    def worker():
-        try:
-            content_dir = PROJECT_UPROJECT.parent / "Content"
-            rel_path = Path(filepath).relative_to(content_dir)
-            asset_name = rel_path.with_suffix("").as_posix()
-            asset_path = f"/Game/{asset_name}"
-            
-            from ExternalServer.src import vector_store
-            if vector_store._bp_collection:
-                try:
-                    vector_store._bp_collection.delete(where={"asset_path": asset_path})
-                    logger.info(f"Successfully deleted {asset_path} from vector store.")
-                except Exception as e:
-                    logger.error(f"ChromaDB delete failed for {asset_path}: {e}")
-        except Exception as e:
-            logger.error(f"Error deleting blueprint {filepath}: {e}")
-
-    threading.Thread(target=worker, daemon=True).start()
-    return True
-
-class UAssetHandler(FileSystemEventHandler):
-    def on_modified(self, event):
-        if event.is_directory:
-            return
-        if event.src_path.endswith('.uasset'):
-            path_parts = Path(event.src_path).parts
-            if any(x in path_parts for x in ('Intermediate', 'Binaries', 'Saved', '.git', '.agents')):
-                return
-            if is_likely_blueprint(event.src_path):
-                logger.info(f"Watchdog: Blueprint modified: {event.src_path}")
-                sync_single_blueprint_sync(event.src_path)
-
-    def on_created(self, event):
-        if event.is_directory:
-            return
-        if event.src_path.endswith('.uasset'):
-            path_parts = Path(event.src_path).parts
-            if any(x in path_parts for x in ('Intermediate', 'Binaries', 'Saved', '.git', '.agents')):
-                return
-            if is_likely_blueprint(event.src_path):
-                logger.info(f"Watchdog: Blueprint created: {event.src_path}")
-                sync_single_blueprint_sync(event.src_path)
-
-    def on_deleted(self, event):
-        if event.is_directory:
-            return
-        if event.src_path.endswith('.uasset'):
-            path_parts = Path(event.src_path).parts
-            if any(x in path_parts for x in ('Intermediate', 'Binaries', 'Saved', '.git', '.agents')):
-                return
-            if is_likely_blueprint(event.src_path):
-                logger.info(f"Watchdog: Blueprint deleted: {event.src_path}")
-                delete_single_blueprint_sync(event.src_path)
-
-def sync_blueprints_on_startup_sync() -> str:
-    logger.info("Starting Blueprint Vector DB startup differential sync...")
-    try:
-        from ExternalServer.src import vector_store
-        indexed = vector_store.get_indexed_blueprints()
-        content_dir = PROJECT_UPROJECT.parent / "Content"
-        if not content_dir.exists():
-            logger.warning(f"Content directory does not exist: {content_dir}. Skipping sync.")
-            return "Content directory not found."
-            
-        uasset_files = []
-        for root, dirs, files in os.walk(content_dir):
-            if any(x in Path(root).parts for x in ('Intermediate', 'Binaries', 'Saved', '.git', '.agents')):
-                continue
-            for f in files:
-                if f.endswith(".uasset") and is_likely_blueprint(os.path.join(root, f)):
-                    uasset_files.append(os.path.join(root, f))
-                    
-        logger.info(f"Discovered {len(uasset_files)} likely Blueprint .uasset files.")
-        
-        to_sync = []
-        discovered_paths = set()
-        
-        for filepath in uasset_files:
-            try:
-                rel_path = Path(filepath).relative_to(content_dir)
-                asset_name = rel_path.with_suffix("").as_posix()
-                asset_path = f"/Game/{asset_name}"
-                discovered_paths.add(asset_path)
-                
-                mtime = os.path.getmtime(filepath)
-                
-                if asset_path not in indexed:
-                    to_sync.append((filepath, asset_path, mtime))
-                else:
-                    db_mtime = indexed[asset_path]
-                    if mtime - db_mtime > 1.0:
-                        to_sync.append((filepath, asset_path, mtime))
-            except Exception as e:
-                logger.error(f"Error checking file {filepath}: {e}")
-                
-        to_delete = []
-        for asset_path in indexed:
-            if asset_path not in discovered_paths:
-                to_delete.append(asset_path)
-                
-        if to_delete:
-            logger.info(f"Purging {len(to_delete)} deleted blueprints from vector DB...")
-            if vector_store._bp_collection:
-                for ap in to_delete:
-                    try:
-                        vector_store._bp_collection.delete(where={"asset_path": ap})
-                    except Exception as e:
-                        logger.error(f"Failed to delete {ap}: {e}")
-            
-        if to_sync:
-            logger.info(f"Found {len(to_sync)} new/modified blueprints. Indexing...")
-            port = get_unreal_port_sync()
-            
-            if not check_ue_server_online_sync(port):
-                msg = "Unreal Engine HTTP server is offline. Startup sync deferred."
-                logger.warning(msg)
-                return msg
-                
-            success_count = 0
-            for filepath, asset_path, mtime in to_sync:
-                if sync_single_blueprint_sync_worker(filepath, asset_path, mtime, port):
-                    success_count += 1
-                time.sleep(0.05)
-                
-            msg = f"Completed. Indexed {success_count}/{len(to_sync)} blueprints."
-            logger.info(msg)
-            return msg
-        else:
-            msg = "All blueprints are up to date."
-            logger.info(msg)
-            return msg
-    except Exception as e:
-        logger.error(f"Error during startup sync: {e}")
-        return f"Error: {e}"
-
-@mcp.tool()
-async def index_all_blueprints() -> str:
-    """
-    Extracts Blueprint Summary Format (BSF) from all Blueprints in the Unreal Engine project and indexes them into the vector database.
-    Requires the Unreal Engine editor to be running with the AgentFramework plugin.
-    """
-    check_and_reload_vector_db()
-    return await asyncio.to_thread(sync_blueprints_on_startup_sync)
-
-# 6. HybridStdin and Stdin Interceptor
 # 6. Search Engine Class definition and Initialization
 def get_project_uproject_version() -> Optional[str]:
     """
@@ -2145,7 +1816,7 @@ def get_project_uproject_version() -> Optional[str]:
                 data = json.load(f)
                 engine_association = data.get("EngineAssociation")
                 if engine_association:
-                    # Clean it: e.g. "5.8" or a path/GUID. We want to extract the major.minor version
+                    # Clean it: e.g. "5.9" or a path/GUID. We want to extract the major.minor version
                     match = re.search(r"(\d+\.\d+)", str(engine_association))
                     if match:
                         return match.group(1)
@@ -2183,11 +1854,11 @@ def get_unreal_version() -> str:
         except WindowsError:
             pass
             
-    return "5.8"
+    return "5.9"
 
 def _search_vector_db_sync(query: str) -> str:
     try:
-        from ExternalServer.src import vector_store
+        vector_store = _import_vector_store()
         results = vector_store.semantic_search(query, n_results=5)
         if not results:
             results = [{
@@ -2524,12 +2195,6 @@ async def execute_manual_tool(name: str, arguments: dict) -> str:
         return await generate_compile_commands()
     elif name == "search_vector_db":
         return await search_vector_db(**arguments)
-    elif name == "search_similar_blueprints":
-        return await search_similar_blueprints(**arguments)
-    elif name == "index_all_blueprints":
-        return await index_all_blueprints()
-    elif name == "format_t3d_layout":
-        return await format_t3d_layout(**arguments)
     elif name in ("inspect_macro_expansion", "query_macro_expansion"):
         macro_arg = arguments.get("macro_name") or arguments.get("query")
         fp_arg = arguments.get("file_path")
@@ -2593,9 +2258,6 @@ def main():
     threading.Thread(target=background_initial_indexing, daemon=True).start()
     
     observer = start_watcher()
-    
-    # Start Blueprint vector DB differential sync in the background
-    threading.Thread(target=sync_blueprints_on_startup_sync, daemon=True).start()
     
     # Register exit and signal hooks
     atexit.register(cleanup_watcher)

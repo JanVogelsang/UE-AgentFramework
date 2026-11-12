@@ -1,4 +1,4 @@
-$DefaultProjectDir = "..\..\.."
+﻿$DefaultProjectDir = "..\..\.."
 $ProjectRoot = Read-Host "Enter the target project root directory [$DefaultProjectDir]"
 if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
     $ProjectRoot = $DefaultProjectDir
@@ -150,7 +150,7 @@ $SkillsSourceDir = "$AgentFrameworkPluginDir\skills"
 if (-not (Test-Path $SkillsSourceDir)) { $SkillsSourceDir = "$PluginDir\skills" }
 
 # ── Resolve Unreal Engine tool paths (used to pre-authorize editor workflows per assistant) ──
-$EngineAssociation = "5.8"
+$EngineAssociation = "5.9"
 $Uproject = Get-ChildItem -Path $TargetProjectDir -Filter *.uproject -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($Uproject) {
     try {
@@ -169,7 +169,7 @@ if (-not $EngineRoot) {
     }
 }
 if (-not $EngineRoot) {
-    foreach ($p in @("C:\Program Files\Epic Games\UE_$EngineAssociation", "C:\Program Files (x86)\Epic Games\UE_$EngineAssociation", "D:\Epic Games\UE_$EngineAssociation")) {
+    foreach ($p in @("D:\UE_$EngineAssociation", "C:\Program Files\Epic Games\UE_$EngineAssociation", "C:\Program Files (x86)\Epic Games\UE_$EngineAssociation", "D:\Epic Games\UE_$EngineAssociation")) {
         if (Test-Path $p) { $EngineRoot = $p; break }
     }
 }

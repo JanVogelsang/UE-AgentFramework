@@ -9,54 +9,56 @@ Configure an actor class for network replication in multiplayer UE games.
 - {{arg}}: Actor class to configure replication for
 ## Steps
 
-### Option A: Blueprint Native Tool Routes (In-Editor Asset Configuration)
+### Option A: UE 5.9 Native Toolset Routes (`EditorToolset.ObjectToolset` & `BlueprintToolsets.BlueprintToolset`)
 
-1. **Configure Actor Network Replication (`configure_actor_replication`)**:
-   Use `configure_actor_replication` to set network replication defaults on a Blueprint actor CDO:
+Use UE 5.9's MCP meta-tools (`describe_tools` / `call_tool`) with module-qualified toolset names `BlueprintToolsets.BlueprintToolset`, `EditorToolset.ObjectToolset`, and `EditorToolset.AssetToolset`:
+
+1. **Configure Actor Network Replication (`BlueprintToolsets.BlueprintToolset.GetDefaultObject` + `EditorToolset.ObjectToolset.SetProperties`)**:
+   First load the Blueprint (`EditorToolset.AssetToolset.LoadAsset`) and fetch its Class Default Object (`BlueprintToolsets.BlueprintToolset.GetDefaultObject`), then call `EditorToolset.ObjectToolset.SetProperties` with `Instance` set to the CDO and `Values` formatted as a JSON string:
    ```json
    {
-     "TargetAsset": "/Game/Blueprints/BP_NetworkPawn",
-     "bReplicates": true,
-     "bReplicateMovement": true,
-     "NetDormancy": "DORM_Never",
-     "NetUpdateFrequency": 100.0,
-     "NetPriority": 1.0
+     "toolset_name": "EditorToolset.ObjectToolset",
+     "tool_name": "SetProperties",
+     "arguments": {
+       "Instance": "/Game/Blueprints/BP_NetworkPawn.Default__BP_NetworkPawn_C",
+       "Values": "{\"bReplicates\": true, \"bReplicateMovement\": true, \"NetDormancy\": \"DORM_Never\", \"NetUpdateFrequency\": 100.0, \"NetPriority\": 1.0}"
+     }
    }
    ```
+   *(If unsure of the exact CDO reference or field names, inspect first with `EditorToolset.ObjectToolset.ListProperties` or `EditorToolset.ObjectToolset.GetPropertySchema`.)*
 
-2. **Configure Variable Replication & RepNotify (`set_variable_replication`)**:
-   
-   - **Standard Variable Replication**:
+2. **Configure Variable Replication & RepNotify (`BlueprintToolsets.BlueprintToolset.SetVariableReplication`)**:
+   Call `BlueprintToolsets.BlueprintToolset.SetVariableReplication` with `Blueprint`, `VariableName`, and `Replication` (`"None"`, `"Replicated"`, or `"RepNotify"`):
+
+   - **Standard Variable Replication (`"Replicated"`)**:
      ```json
      {
-       "TargetAsset": "/Game/Blueprints/BP_NetworkPawn",
-       "VariableName": "Health",
-       "ReplicationType": "Replicated",
-       "ReplicationCondition": "COND_None"
+       "toolset_name": "BlueprintToolsets.BlueprintToolset",
+       "tool_name": "SetVariableReplication",
+       "arguments": {
+         "Blueprint": "/Game/Blueprints/BP_NetworkPawn",
+         "VariableName": "Health",
+         "Replication": "Replicated"
+       }
      }
      ```
 
-   - **Replication with RepNotify Callback**:
-     Setting `ReplicationType` to `"RepNotify"` and specifying `RepNotifyFunc` will automatically generate the `OnRep_Shield` callback graph:
+   - **Replication with RepNotify Callback (`"RepNotify"`)**:
+     Setting `Replication` to `"RepNotify"` automatically generates the `OnRep_Shield` callback function on the Blueprint if it does not already exist:
      ```json
      {
-       "TargetAsset": "/Game/Blueprints/BP_NetworkPawn",
-       "VariableName": "Shield",
-       "ReplicationType": "RepNotify",
-       "RepNotifyFunc": "OnRep_Shield",
-       "ReplicationCondition": "COND_None"
+       "toolset_name": "BlueprintToolsets.BlueprintToolset",
+       "tool_name": "SetVariableReplication",
+       "arguments": {
+         "Blueprint": "/Game/Blueprints/BP_NetworkPawn",
+         "VariableName": "Shield",
+         "Replication": "RepNotify"
+       }
      }
      ```
 
-   - **Replication with Lifetime Condition (Owner Only / Skip Owner)**:
-     ```json
-     {
-       "TargetAsset": "/Game/Blueprints/BP_NetworkPawn",
-       "VariableName": "SecretData",
-       "ReplicationType": "Replicated",
-       "ReplicationCondition": "COND_OwnerOnly"
-     }
-     ```
+   - **Verify, Compile, and Save**:
+     Query current replication mode with `BlueprintToolsets.BlueprintToolset.GetVariableReplication`, compile via `BlueprintToolsets.BlueprintToolset.CompileBlueprint`, and save via `EditorToolset.AssetToolset.SaveAsset`. *(Note: lifetime replication conditions such as `COND_OwnerOnly` are configured in C++ via `DOREPLIFETIME_CONDITION` as shown below, or via Blueprint property details if exposed on the variable.)*
 
 ### Option B: C++ Code Patterns (Base Class Implementation)
 
@@ -101,5 +103,5 @@ Configure an actor class for network replication in multiplayer UE games.
 
 5. **Required include**: `#include "Net/UnrealNetwork.h"`
 
-## Python API Tip (UE 5.8)
+## Python API Tip (UE 5.9)
 - To set replication on a Blueprint CDO via Unreal Python: `cdo = bp.get_editor_property('generated_class').get_default_object()`, call `cdo.set_replicates(True)`, and compile with `unreal.BlueprintEditorLibrary.compile_blueprint(bp)`.

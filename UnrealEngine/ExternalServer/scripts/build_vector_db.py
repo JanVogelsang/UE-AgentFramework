@@ -114,7 +114,7 @@ def chunk_text(text: str, max_chars: int = 800, overlap: int = 100) -> List[str]
 def main():
     parser = argparse.ArgumentParser(description="Build versioned ChromaDB for Unreal Engine documentation.")
     parser.add_argument("--docs-dir", required=True, help="Directory containing PDFs or Markdown/Text documentation files.")
-    parser.add_argument("--ue-version", default="5.8", help="Unreal Engine version (e.g. 5.8) for output directory naming.")
+    parser.add_argument("--ue-version", default="5.9", help="Unreal Engine version (e.g. 5.9) for output directory naming.")
     parser.add_argument("--output-dir", help="Explicit path to output directory (overrides default naming).")
     parser.add_argument("--upload-github", action="store_true", help="Zip the output vector database and upload it to GitHub release 'vector-dbs'.")
     

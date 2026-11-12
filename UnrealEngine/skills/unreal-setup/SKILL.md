@@ -23,7 +23,7 @@ Before executing or implementing any setup steps, you must perform a diagnostic 
    - **Check for local environment configuration**: Check if local environment paths are already configured inside `unreal-instructions/SKILL.md`.
    - **Check for C++ AST database cache**: Check if `ast_cache.db` exists in the external server directory and contains indexed symbol tables.
    - **Check for project index skill**: Check if `.agents/skills/project-index/SKILL.md` and references under `references/` exist.
-   - **Check for AGENTS.md**: Check if `.agents/AGENTS.md` is present and configured at the workspace root.
+   - **Check for AGENTS.md / CLAUDE.md**: Check if `AGENTS.md` (and `CLAUDE.md` when using Claude Code) is present and configured at the workspace root.
 
 2. **Create Implementation Plan**:
    Present an implementation plan using your harness's native planning mechanism (in Antigravity: an `implementation_plan.md` artifact in the artifact directory `<appDataDir>\brain\<conversation-id>` with `request_feedback: true` and `user_facing: true` in the metadata; in Claude Code: plan mode or a plain plan message in the conversation; in other harnesses: a plan message).
@@ -158,7 +158,7 @@ Before executing or implementing any setup steps, you must perform a diagnostic 
    - Read key files in the `Config/` directory (e.g., `DefaultEngine.ini`, `DefaultInput.ini`, `DefaultGame.ini`).
    - Extract crucial project setup properties (like default game modes, maps, input keys, etc.).
 4. **Discover Live Assets (If Unreal Editor is Running)**:
-   - **Editor Online**: If the editor MCP server is active, query the active project assets. Search for the main GameMode, HUD, PlayerController, Character, and major UI widgets using `search_assets` and extract their package/asset paths.
+   - **Editor Online**: If the editor MCP server is active, query the active project assets. Search for the main GameMode, HUD, PlayerController, Character, and major UI widgets via `call_tool` (`toolset_name="EditorToolset.AssetToolset"`, `tool_name="FindAssets"`) and extract their package/asset paths.
    - **Editor Offline Fallback**: If the editor MCP server is not running or throws errors, do NOT fail the setup. Instead:
      - Scan the filesystem under `Content/` to locate primary Blueprint files.
      - Parse `DefaultEngine.ini` or log files to infer class configurations.
@@ -267,7 +267,7 @@ Consult these detailed documentation files to understand the project architectur
 
 ## Project Metadata
 - **Project File:** [ProjectName.uproject](file:///absolute/path/to/ProjectName.uproject)
-- **Engine Version:** [e.g., 5.7]
+- **Engine Version:** [e.g., 5.9]
 - **Target Platforms:** [e.g., Win64, Android, PS5]
 
 ## Active Modules & Plugins
@@ -299,15 +299,15 @@ Consult these detailed documentation files to understand the project architectur
 - **Automation Scripts:** [e.g., run_tests.ps1, build_plugin.ps1]
 ```
 
-### Step 9: Append Workspace Rules and Game Description (AGENTS.md)
-Check if `.agents/AGENTS.md` exists at the project root.
-- If it does not exist, copy `UnrealEngine/AGENTS.md` to `.agents/AGENTS.md`.
-- If it does exist, inspect its contents. If the "Ponytail Ladder" or "Project Knowledge & Navigation" sections are already present, do NOT append. Otherwise, read the entire contents of `UnrealEngine/AGENTS.md` using your file-reading tool or `Get-Content`, and append the entire content to `.agents/AGENTS.md`. This ensures that all critical global instructions and efficiency rules are correctly applied to the workspace.
+### Step 9: Append Workspace Rules and Game Description (AGENTS.md / CLAUDE.md)
+Check if `AGENTS.md` (and `CLAUDE.md` for Claude Code) exists at the project workspace root (where `install.ps1` deploys them).
+- If `AGENTS.md` does not exist at the project root, copy `UnrealEngine/AGENTS.md` to `AGENTS.md` (and update `CLAUDE.md` similarly if present or using Claude Code).
+- If it does exist, inspect its contents. If the `"Unreal Engine 5.9 Agent Guidelines"` heading is already present, do NOT append. Otherwise, read the entire contents of `UnrealEngine/AGENTS.md` using your file-reading tool or `Get-Content`, and append the entire content to the workspace-root `AGENTS.md` (and `CLAUDE.md` if present). This ensures that all critical global instructions and efficiency rules are correctly applied to the workspace.
 
-After setting up the workspace rules, extend `.agents/AGENTS.md` (or the copied file) by inserting a short and precise description of the game:
+After setting up the workspace rules, extend the workspace-root `AGENTS.md` (and `CLAUDE.md` if present) by inserting a short and precise description of the game:
 1. Check if a game description or summary is already created in the workspace (e.g., in the root `AGENTS.md` under a `## Game Summary` or `## Game Description` section, or in `.agents/skills/project-index/references/concepts.md` under `## Core Gameplay Fantasy - Overview`).
-2. If such a description is found, format it nicely and insert it near the top of `.agents/AGENTS.md` under a `## Game Summary` section (if not already present).
-3. If no description is found, generate a concise 2-3 sentence overview summarizing the game's core loop, genre, and key systems based on the indexed files (from `concepts.md` or from parsing the codebase), and insert it under a `## Game Summary` section in `.agents/AGENTS.md`.
+2. If such a description is found, format it nicely and insert it near the top of the workspace-root `AGENTS.md` under a `## Game Summary` section (if not already present).
+3. If no description is found, generate a concise 2-3 sentence overview summarizing the game's core loop, genre, and key systems based on the indexed files (from `concepts.md` or from parsing the codebase), and insert it under a `## Game Summary` section in the workspace-root `AGENTS.md`.
 
 
 ### Step 10: Complete and Instruct User

@@ -1,56 +1,25 @@
 ---
 name: add-component
-description: Add and configure a UE component on an existing actor class.
----
-# Skill: Add Component to Actor
-## Description
-Add and configure a UE component on an existing actor class.
-## Arguments
-- {{arg1}}: Actor class name
-- {{arg2}}: Component type (e.g., UStaticMeshComponent, UAudioComponent)
-## Steps
-1. **In header**, declare the component:
-   ```cpp
-   UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
-   TObjectPtr<{{arg2}}> MyComponent;
-   ```
-
-2. **In constructor**, create and attach:
-   ```cpp
-   MyComponent = CreateDefaultSubobject<{{arg2}}>(TEXT("MyComponent"));
-   MyComponent->SetupAttachment(RootComponent);
-   ```
-
-3. **Configure default properties** as needed
-
-4. **Add required include** for the component type
-
-## Notes
-- Use TObjectPtr<> instead of raw pointers for GC safety
-- VisibleAnywhere shows in viewport, EditAnywhere allows editing
-- If adding a component from a non-core module (e.g., `UMG`, `Niagara`), ensure the module is added to `PublicDependencyModuleNames` in the `.Build.cs` file.
-
+description: Use this skill to add, reparent, configure, or remove Components (`UActorComponent`, `USceneComponent`) on a Blueprint asset or Level Actor in Unreal Engine 5.9 using `EditorToolset.ActorToolset`, `BlueprintToolsets.BlueprintToolset`, `EditorToolset.ObjectToolset`, and `EditorToolset.AssetToolset`.
 ---
 
-## Design-Time Blueprint Component Attachment (Native C++ Tool)
+# Add & Configure Components (Unreal Engine 5.9)
 
-To attach a new component to an existing Blueprint asset (`.uasset`) at design time without modifying C++ source code, use the native C++ action tool `add_blueprint_component`.
+Use Epic's native `EditorToolset.ActorToolset`, `BlueprintToolsets.BlueprintToolset`, `EditorToolset.ObjectToolset`, and `EditorToolset.AssetToolset` (invoked via `call_tool` on `/mcp` using module-qualified `toolset_name` values) to manage component hierarchies on Blueprint assets and level actors.
 
-### Usage Protocol
-Invoke `add_blueprint_component` with the target Blueprint asset path, component class, new component name, and optional parent attachment node:
+## Workflow
 
-```json
-{
-  "blueprint_path": "/Game/Blueprints/BP_MyActor",
-  "component_class": "UStaticMeshComponent",
-  "component_name": "MeshComponent",
-  "parent_component_name": "DefaultSceneRoot"
-}
-```
-
-### Parameters
-* `blueprint_path` (string, required): Object path to target Blueprint asset.
-* `component_class` (string, required): Component class name (e.g. `'UStaticMeshComponent'`, `'USphereComponent'`, `'UAudioComponent'`, `'UNiagaraComponent'`).
-* `component_name` (string, required): Unique identifier name for the new SCS component node.
-* `parent_component_name` (string, optional): Parent component node to attach under. Defaults to `RootComponent` if omitted.
-
+1. **Inspect Existing Component Hierarchy:**
+   - For a level `AActor` instance, call `EditorToolset.ActorToolset.GetComponents` (plus `EditorToolset.ActorToolset.GetRootComponent` and `EditorToolset.ActorToolset.GetParentComponent`) to inspect existing components and parent-child relationships.
+   - For a Blueprint asset, inspect its structure with `BlueprintToolsets.BlueprintDslToolset.Read` or load its generated CDO via `BlueprintToolsets.BlueprintToolset.GetDefaultObject`.
+2. **Add or Reparent the Component:**
+   - Call `EditorToolset.ActorToolset.AddComponent` with:
+     - `Owner`: Target actor Blueprint, actor instance, or parent `USceneComponent`
+     - `ComponentType`: Component class (e.g., `StaticMeshComponent`, `SphereComponent`, `CapsuleComponent`, `AudioComponent`, `NiagaraComponent`, `WidgetComponent`, or a custom C++/Blueprint component class)
+     - `Name`: Component name
+   - Reparent scene components using `EditorToolset.ActorToolset.SetParentComponent` (`Component`, `Parent`), or delete with `EditorToolset.ActorToolset.RemoveComponent` (`Component`).
+3. **Configure Component Properties & Transform:**
+   - Call `EditorToolset.ObjectToolset.SetProperties` (`Instance`, `Values` JSON string) on the component template or instance to configure properties (`StaticMesh`, `OverrideMaterials[0]`, `BodyInstance.CollisionProfileName`, gameplay properties, etc.). Inspect property names first with `EditorToolset.ObjectToolset.ListProperties` or `EditorToolset.ObjectToolset.GetPropertySchema`.
+   - Use `EditorToolset.ActorToolset.SetComponentTransform` (`Component`, `Translation`, `Rotation`, `Scale`, `bWorldSpace`) for relative/world transform adjustments.
+4. **Compile & Save:**
+   - When modifying a Blueprint asset, call `BlueprintToolsets.BlueprintToolset.CompileBlueprint` (`Blueprint`) and `EditorToolset.AssetToolset.SaveAsset` (`AssetPath`) to persist changes.

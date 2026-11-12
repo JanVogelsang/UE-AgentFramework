@@ -5,7 +5,7 @@ ExternalServer/.venv/
 
 # Local caches and databases
 ExternalServer/ast_cache.db
-ExternalServer/vector_db_5.8/
+ExternalServer/vector_db_*/
 
 
 # Git hook log files

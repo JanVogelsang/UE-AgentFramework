@@ -1,4 +1,4 @@
-// Copyright AgentFramework. All Rights Reserved.
+// Copyright 2026 AgentFramework. All Rights Reserved.
 
 using UnrealBuildTool;
 
@@ -13,80 +13,24 @@ public class AgentFrameworkActions : ModuleRules
 			"Core",
 			"CoreUObject",
 			"Engine",
-			"Json",
-			"JsonUtilities",
+			"InputCore",
 			"AgentFrameworkCore",
-			"AgentFrameworkEngine"
+			"ToolsetCore",
+			"ToolsetRegistry",
+			"AsyncFunctionResult",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
-			"UnrealEd",
-			"MessageLog",
-			"AssetTools",
-			"AssetRegistry",
-			"Kismet",
-			"KismetCompiler",
-			"BlueprintGraph",
-			"GraphEditor",
-			"MaterialEditor",
-			"SourceControl",
-			"DesktopPlatform",
-			"Settings",
-			"EditorScriptingUtilities",
-			"MeshDescription",
-			"StaticMeshDescription",
-			"RenderCore",
-			"RHI",
-			"NavigationSystem",
-			"AIModule",
-			"LevelEditor",
-			"MainFrame",
-			"LiveCoding",
-			"HTTPServer",
-			"Projects",
-			// UMG / Widget Blueprint authoring
-			"UMG",
-			"UMGEditor",
-			// Animation Blueprint authoring
-			"AnimationBlueprintEditor",
-			"AnimGraph",
-			"AnimGraphRuntime",
-			// Enhanced Input asset authoring
-			"EnhancedInput",
-			"InputBlueprintNodes",
-			"InputCore",
-			// Viewport capture (multimodal vision)
-			"ImageWrapper",
 			"Slate",
 			"SlateCore",
-			"WebBrowser",
-			// Behavior Tree / AI
-			"GameplayTasks",
-			// Sequencer / Cinematics
-			"LevelSequence",
-			"MovieScene",
-			"MovieSceneTracks",
-			"MovieSceneTools",
-			// Python scripting (conditional)
-			"PythonScriptPlugin",
-			// Data Validation (UEditorValidatorSubsystem)
-			"DataValidation",
-			// Gameplay Ability System
-			"GameplayAbilities",
-			"GameplayTags",
-			"GameplayTagsEditor",
-			"GameplayAbilitiesEditor",
-			// Niagara Support
-			"Niagara",
-			"NiagaraCore",
-			"NiagaraEditor"
+			"UnrealEd",
+			"Kismet",
+			"AssetRegistry",
+			"AssetTools",
+			"Json",
+			"JsonUtilities",
+			"EnhancedInput",
 		});
-
-		// Conditionally add Python support
-		if (Target.bBuildWithEditorOnlyData)
-		{
-			PrivateDefinitions.Add("WITH_PYTHON=1");
-		}
 	}
 }

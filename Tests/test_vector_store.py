@@ -29,7 +29,7 @@ def test_vector_store_not_initialized():
     assert results == []
 
 def test_vector_store_e2e(temp_vector_db):
-    import chromadb
+    chromadb = pytest.importorskip("chromadb")
     from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
     
     # Create the test db and pre-populate it (mimicking the dev script)
@@ -90,6 +90,7 @@ def test_download_and_extract_db_failure(temp_vector_db):
         assert success is False
 
 def test_initialize_db_with_download(temp_vector_db):
+    pytest.importorskip("chromadb")
     from unittest.mock import patch
     
     # Reset state

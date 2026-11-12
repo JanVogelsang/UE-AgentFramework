@@ -81,11 +81,11 @@ if (Test-Path $MainVenv) {
     Log-Message "Warning: Main virtual environment not found at $MainVenv"
 }
 
-$MainVectorDb = Join-Path $MainPluginDir "ExternalServer\vector_db_5.8"
-$WorktreeVectorDb = Join-Path $WorktreeExtServerDir "vector_db_5.8"
-if (Test-Path $MainVectorDb) {
-    New-Item -ItemType Junction -Path $WorktreeVectorDb -Value $MainVectorDb -Force | Out-Null
-    Log-Message "Junction created for static documentation Vector DB."
+$VectorDbDirs = Get-ChildItem -Path (Join-Path $MainPluginDir "ExternalServer") -Directory -Filter "vector_db_*" -ErrorAction SilentlyContinue
+foreach ($MainVectorDb in $VectorDbDirs) {
+    $WorktreeVectorDb = Join-Path $WorktreeExtServerDir $MainVectorDb.Name
+    New-Item -ItemType Junction -Path $WorktreeVectorDb -Value $MainVectorDb.FullName -Force | Out-Null
+    Log-Message "Junction created for static documentation Vector DB ($($MainVectorDb.Name))."
 }
 
 # 7. Copy Stateful/Configuration files

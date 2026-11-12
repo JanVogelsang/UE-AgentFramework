@@ -36,49 +36,34 @@ python "{AGENT_PLUGIN_DIR}/ExternalServer/src/generative_utils.py" --project-roo
 ```
 *Note: This will download a proper RIFF/WAV file.*
 
-## Step 2: Import into Unreal Engine
+## Step 2: Import into Unreal Engine (UE 5.9 Native Toolsets)
 
-Once the Python script succeeds, it will print the absolute paths of the downloaded files. You MUST import these files into the Unreal Editor immediately.
+Once the Python script succeeds, it will print the absolute paths of the downloaded files. Import these files into Unreal Editor via `call_tool` with module-qualified toolset names (`<Module>.<Toolset>`, use `describe_tools` if you need full schemas):
 
 **For 3D Models:**
-1. Use the `import_mesh` MCP tool for the `.fbx` model.
-2. Use the `import_assets_batch` MCP tool for the texture `.png` files (`base_color`, `normal`, `roughness`, `metallic`, `ao`).
-3. Destination paths: `/Game/GenAI/Meshes/` for models, `/Game/GenAI/Textures/` for texture maps.
+1. Call `EditorToolset.StaticMeshToolset.ImportFile` (`FolderPath: "/Game/GenAI/Meshes"`, `AssetName`, `SourceFile`, `bImportMaterials`, `bImportTextures`, `bReplaceExisting: true`, `bSave: true`) for static meshes, or `EditorToolset.SkeletalMeshToolset.ImportFile` for rigged meshes.
+2. Call `EditorToolset.TextureToolset.ImportFile` (`FolderPath: "/Game/GenAI/Textures"`, `AssetName`, `SourceFile`, `bReplaceExisting: true`, `bSave: true`) for each downloaded texture map (`base_color`, `normal`, `roughness`, `metallic`, `ao`).
 
 **For Audio (.wav):**
-1. Use the `import_assets_batch` MCP tool.
-2. Destination path: `/Game/GenAI/Audio/`.
+1. Call `EditorToolset.SoundWaveToolset.ImportFile` (`FolderPath: "/Game/GenAI/Audio"`, `AssetName`, `SourceFile`, `bReplaceExisting: true`, `bSave: true`).
 
-## Step 3: One-Shot PBR Material Setup (3D Models Only)
+## Step 3: PBR Material Setup (3D Models Only)
 
-After importing the mesh and texture maps, build and assign the material using the native one-shot PBR material action:
+After importing the mesh and texture maps, build and assign the material using `EditorToolset.MaterialToolset`, `EditorToolset.MaterialInstanceToolset`, `EditorToolset.ObjectToolset`, `EditorToolset.StaticMeshToolset`, and `EditorToolset.AssetToolset`:
 
-1. **Create PBR Material Graph**: Use `create_pbr_material_from_textures` to instantiate texture samples and wire `BaseColor`, `Normal`, `Roughness`, `Metallic`, and `AO` pins in a single atomic tool call:
-   ```json
-   {
-     "MaterialPath": "/Game/GenAI/Materials/M_GenAI_{Name}",
-     "BaseColorTexturePath": "/Game/GenAI/Textures/T_{Name}_BaseColor",
-     "NormalTexturePath": "/Game/GenAI/Textures/T_{Name}_Normal",
-     "RoughnessTexturePath": "/Game/GenAI/Textures/T_{Name}_Roughness",
-     "MetallicTexturePath": "/Game/GenAI/Textures/T_{Name}_Metallic",
-     "BlendMode": "Opaque",
-     "ShadingModel": "DefaultLit"
-   }
-   ```
-2. **Assign Material**: Use `configure_static_mesh` or `set_component_properties` to assign `/Game/GenAI/Materials/M_GenAI_{Name}` to the static mesh material slot.
+1. **Create & Author PBR Material Graph (`EditorToolset.MaterialToolset`)**:
+   - Create the material asset with `EditorToolset.MaterialToolset.CreateMaterial` (`FolderPath: "/Game/GenAI/Materials"`, `AssetName: "M_GenAI_{Name}"`).
+   - Find `TextureSample` node class via `EditorToolset.MaterialToolset.ListExpressionClasses` (`Search: "TextureSample"`) and add sample nodes via `EditorToolset.MaterialToolset.AddExpression`.
+   - Assign each imported `UTexture2D` asset via `EditorToolset.ObjectToolset.SetProperties` on each expression node, wire expressions to `MP_BaseColor`, `MP_Normal`, `MP_Roughness`, `MP_Metallic`, and `MP_AmbientOcclusion` via `EditorToolset.MaterialToolset.ConnectToOutput`, and compile with `EditorToolset.MaterialToolset.Recompile`.
+   - *(Alternatively, if your project already has a master PBR Material, create an instance via `EditorToolset.MaterialInstanceToolset.Create` and bind maps using `EditorToolset.MaterialInstanceToolset.SetTextureParameter`.)*
+2. **Assign Material & Save (`EditorToolset.StaticMeshToolset` & `EditorToolset.AssetToolset`)**:
+   - Query slot names with `EditorToolset.StaticMeshToolset.GetMaterialSlots`, assign `/Game/GenAI/Materials/M_GenAI_{Name}` via `EditorToolset.StaticMeshToolset.SetMaterial` (`Mesh`, `SlotName`, `Material`), and persist with `EditorToolset.AssetToolset.SaveAsset`.
 
-## Step 4: Sound Wave & Cue Setup (Audio Assets Only)
+## Step 4: Audio Asset Configuration (Audio Assets Only)
 
-After importing raw `.wav` audio files into `/Game/GenAI/Audio/`:
+After importing `.wav` files into `/Game/GenAI/Audio/` via `EditorToolset.SoundWaveToolset.ImportFile`:
 
-1. **Configure Sound Wave & Sound Cue**: Use `configure_sound_wave_cue` to set playback parameters (`bLooping`, `VolumeMultiplier`, `PitchMultiplier`) and optionally generate a `USoundCue` asset with 3D spatial attenuation:
-   ```json
-   {
-     "SoundWaveAsset": "/Game/GenAI/Audio/SW_GenAI_{Name}",
-     "CueAssetPath": "/Game/GenAI/Audio/SC_GenAI_{Name}",
-     "bLooping": false,
-     "VolumeMultiplier": 1.0,
-     "PitchMultiplier": 1.0,
-     "AttenuationAssetPath": "/Game/Audio/ATT_Default3D"
-   }
-   ```
+1. **Configure `USoundWave` Properties (`EditorToolset.ObjectToolset` & `EditorToolset.AssetToolset`)**:
+   - Inspect available properties on the imported `USoundWave` with `EditorToolset.ObjectToolset.ListProperties` or `EditorToolset.ObjectToolset.GetPropertySchema`.
+   - Set playback properties (such as `bLooping`, `Volume`, `Pitch`, and `AttenuationSettings`) using `EditorToolset.ObjectToolset.SetProperties` and persist with `EditorToolset.AssetToolset.SaveAsset`.
+   - For procedural or spatialized audio synthesis graphs, use `MetaSoundToolset.MetaSoundAuthoringToolset` (`describe_toolsets` with `["MetaSoundToolset.MetaSoundAuthoringToolset"]`).

@@ -1,4 +1,4 @@
-$PSScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+﻿$PSScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PluginDir = (Resolve-Path (Join-Path $PSScriptDir "..")).Path
 
 # Try to find the uproject file dynamically by searching upwards
@@ -35,7 +35,7 @@ $ProjectName = [System.IO.Path]::GetFileNameWithoutExtension($ProjectFile)
 $EditorTarget = $ProjectName + "Editor"
 
 # Parse .uproject to extract EngineAssociation
-$EngineAssociation = "5.8" # Default fallback
+$EngineAssociation = "5.9" # Default fallback
 if (Test-Path $ProjectFile) {
     try {
         $UprojectJson = Get-Content -Raw -Path $ProjectFile | ConvertFrom-Json
@@ -51,7 +51,7 @@ $InstalledDir = $null
 
 # Resolve InstalledDirectory based on EngineAssociation
 if ($EngineAssociation -match "^\d+\.\d+$") {
-    # Standard version string (e.g. "5.8")
+    # Standard version string (e.g. "5.9")
     $RegistryPath = "HKLM:\SOFTWARE\EpicGames\Unreal Engine\$EngineAssociation"
     $InstalledDir = (Get-ItemProperty -Path $RegistryPath -Name InstalledDirectory -ErrorAction SilentlyContinue).InstalledDirectory
     
@@ -66,6 +66,7 @@ if ($EngineAssociation -match "^\d+\.\d+$") {
     # Fallback to standard paths if registry lookup fails
     if (-not $InstalledDir) {
         $FallbackPaths = @(
+            "D:\UE_$EngineAssociation",
             "C:\Program Files\Epic Games\UE_$EngineAssociation",
             "C:\Program Files (x86)\Epic Games\UE_$EngineAssociation",
             "D:\Epic Games\UE_$EngineAssociation"
@@ -87,7 +88,7 @@ if ($EngineAssociation -match "^\d+\.\d+$") {
 
 # Ultimate fallback
 if (-not $InstalledDir) {
-    $InstalledDir = "C:\Program Files\Epic Games\UE_5.8"
+    $InstalledDir = "C:\Program Files\Epic Games\UE_5.9"
 }
 
 # Clean trailing slashes & normalize to forward slashes

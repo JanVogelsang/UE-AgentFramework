@@ -44,7 +44,7 @@ $CleanProjectPath = $ProjectPath.Replace('\', '/')
 # 2. Resolve EditorExe
 if (-not $EditorExe) {
     # Try reading EngineAssociation from .uproject
-    $EngineAssoc = "5.8"
+    $EngineAssoc = "5.9"
     if (Test-Path $CleanProjectPath) {
         try {
             $Json = Get-Content -Raw -Path $CleanProjectPath | ConvertFrom-Json
@@ -63,14 +63,14 @@ if (-not $EditorExe) {
         }
     }
     if (-not $EngineRoot) {
-        foreach ($p in @("C:\Program Files\Epic Games\UE_$EngineAssoc", "C:\Program Files (x86)\Epic Games\UE_$EngineAssoc", "D:\Epic Games\UE_$EngineAssoc")) {
+        foreach ($p in @("D:\UE_$EngineAssoc", "C:\Program Files\Epic Games\UE_$EngineAssoc", "C:\Program Files (x86)\Epic Games\UE_$EngineAssoc", "D:\Epic Games\UE_$EngineAssoc")) {
             if (Test-Path $p) { $EngineRoot = $p; break }
         }
     }
     if ($EngineRoot) {
         $EditorExe = Join-Path $EngineRoot "Engine\Binaries\Win64\UnrealEditor.exe"
     } else {
-        $EditorExe = "C:/Program Files/Epic Games/UE_5.8/Engine/Binaries/Win64/UnrealEditor.exe"
+        $EditorExe = "C:/Program Files/Epic Games/UE_5.9/Engine/Binaries/Win64/UnrealEditor.exe"
     }
 }
 

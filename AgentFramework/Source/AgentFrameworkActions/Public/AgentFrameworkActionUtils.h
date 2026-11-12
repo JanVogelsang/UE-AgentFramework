@@ -246,4 +246,61 @@ public:
 	 * @param OutAssetName   Asset name only ("WBP_HealthBar").
 	 */
 	static void SplitAssetPath(const FString& InPath, FString& OutPackageName, FString& OutPackagePath, FString& OutAssetName);
+
+	static bool IsValidCppIdentifier(const FString& Name);
+	static bool FormatCppFloatLiteral(double Value, FString& OutLiteral);
+	static bool IsWritableSourcePath(const FString& FilePath);
+	static bool ResolveWritableModulePaths(
+		const FString& RequestedModuleName,
+		const FString& SubDirectory,
+		FString& OutModuleName,
+		FString& OutHeaderDir,
+		FString& OutSourceDir,
+		FString& OutIncludePrefix,
+		FString& OutApiMacro,
+		FString& OutError);
+	static bool EnsureAssetDoesNotExist(const FString& AssetPath, FString& OutPackageName, FString& OutAssetName, FString& OutError);
+	static bool SaveAssetChecked(UPackage* Package, UObject* Asset, bool bIsNewAsset, FString& OutError);
+	static void CleanupFailedNewAsset(UPackage* Package, UObject* Asset);
+	static void RaiseToolError(const FString& ToolName, const FString& ErrorMessage);
+	static class UAsyncFunctionResultString* RunMonitoredProcessAsync(
+		const FString& ToolName,
+		const FString& Executable,
+		const FString& Params,
+		float TimeoutSeconds,
+		TFunction<void(int32 ExitCode, const FString& Output, FString& OutValue, FString& OutError)> OnComplete);
+
+	struct FScopedUFunctionFrame
+	{
+		UFunction* Function = nullptr;
+		uint8* Buffer = nullptr;
+
+		FScopedUFunctionFrame(UFunction* InFunction, uint8* InAllocatedBuffer)
+			: Function(InFunction)
+			, Buffer(InAllocatedBuffer)
+		{
+			if (Function && Buffer && Function->PropertiesSize > 0)
+			{
+				FMemory::Memzero(Buffer, Function->PropertiesSize);
+				for (TFieldIterator<FProperty> It(Function); It && It->HasAnyPropertyFlags(CPF_Parm); ++It)
+				{
+					It->InitializeValue_InContainer(Buffer);
+				}
+			}
+		}
+
+		~FScopedUFunctionFrame()
+		{
+			if (Function && Buffer)
+			{
+				for (TFieldIterator<FProperty> It(Function); It && It->HasAnyPropertyFlags(CPF_Parm); ++It)
+				{
+					It->DestroyValue_InContainer(Buffer);
+				}
+			}
+		}
+
+		FScopedUFunctionFrame(const FScopedUFunctionFrame&) = delete;
+		FScopedUFunctionFrame& operator=(const FScopedUFunctionFrame&) = delete;
+	};
 };

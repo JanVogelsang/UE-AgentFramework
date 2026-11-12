@@ -1,20 +1,24 @@
-# AgentFramework UnrealEngine MCP Plugin
+# AgentFramework UnrealEngine MCP Plugin (v2.0.0 for UE 5.9)
 
-This is the AgentFramework agent plugin component of the **UE-AgentFramework** integration. It provides the Model Context Protocol (MCP) server configuration that allows AI assistants to communicate with the Unreal Engine Editor.
+This is the AI assistant plugin component of **UE-AgentFramework** for **Unreal Engine 5.9**. It provides the MCP server configuration, stdio proxy bridge, Clang AST/RAG server, and UE 5.9 workflow skills allowing AI coding assistants to inspect C++ symbols cleanly and drive Unreal Editor's built-in MCP server.
+
+> **Engine Compatibility:**
+> - **Unreal Engine 5.9:** Use `main` (`v2.0.0`).
+> - **Unreal Engine 5.7 / 5.8:** Check out git tag `v1.1.0-ue5.8` (`git checkout v1.1.0-ue5.8`).
 
 ## Architecture
 
-This plugin encompasses two main components:
-1. **Python MCP Bridge (`bridge/main.py`)**: A lightweight proxy that translates standard input/output (`stdin`/`stdout`) JSON-RPC messages from any MCP-compatible AI client to the Unreal Engine Editor's HTTP loopback server. It is launched as `python -m bridge.main`, with `PYTHONPATH` pointing at the installed plugin directory.
-2. **External Python Server (`ExternalServer`)**: An AST Indexing and RAG server that runs as a standalone Python process. It uses `libclang` to parse C++ files, maintains an SQLite database cache, and performs semantic documentation search.
+This plugin encompasses two MCP servers configured automatically by `install.ps1`:
+1. **Python MCP Bridge (`bridge/main.py` -> `unrealengine`)**: A lightweight stdio MCP proxy (`UE59StreamableHttpClient`) that translates standard input/output (`stdin`/`stdout`) JSON-RPC messages from MCP clients to **Unreal Engine 5.9's built-in `ModelContextProtocol` Streamable HTTP server** (`http://127.0.0.1:8000/mcp`, spec `2025-11-25`). When `bEnableToolSearch = true` (UE 5.9 default), the upstream server exposes `list_toolsets`, `describe_toolsets`, `describe_tools`, and `call_tool` covering UE 5.9's native toolsets plus the 6 custom `AgentFrameworkActions.*` toolsets. Launched as `python -X utf8 -u -m bridge.main` with `PYTHONPATH` pointing at the installed plugin directory.
+2. **External Python Server (`ExternalServer/src/main.py` -> `cpp-ast-rag`)**: A standalone stdio MCP server using `libclang` (auto-discovering Clang/LLVM or installing `libclang`) to index project C++ ASTs into a SQLite database (`ast_cache.db`), inspect macro expansions, render multi-file call graphs, regenerate `compile_commands.json`, and search UE 5.9 engine API documentation via optional ChromaDB RAG.
 
 ### LLM Profile System
 
-The bridge supports a **profile-based configuration** that automatically adapts tool schemas, image handling, and tool visibility to the capabilities of the active LLM.
+The bridge supports a **profile-based configuration** that adapts image content handling, optional tool filtering, tool overrides, and native UE 5.9 MCP port overrides to the active client/model.
 
 **Resolution order:**
 1. `BRIDGE_PROFILE` environment variable (highest priority)
-2. Auto-detection from MCP `clientInfo.name` (e.g., Antigravity is detected automatically)
+2. Auto-detection from MCP `clientInfo.name` (e.g., `antigravity`, `claude` via lowercase match)
 3. `profiles/default.json` (fallback)
 
 #### Available Profiles
@@ -23,9 +27,9 @@ The bridge supports a **profile-based configuration** that automatically adapts 
 |---|---|---|---|
 | `default` | No | None | Safe fallback for unknown clients |
 | `antigravity` | Yes | None | Auto-detected when using Antigravity |
-| `deepseek-v4` | No | CoT triggers, strict schemas | DeepSeek V4 via Kilo Code |
-| `kimi-k2` | No | Bilingual CoT (EN/ZH) | Kimi K2.6 via Kilo Code |
-| `claude` | Yes | None | Claude via Kilo Code or Claude Desktop |
+| `deepseek-v4` | No | None | DeepSeek V4 via Kilo Code |
+| `kimi-k2` | No | None | Kimi K2.6 via Kilo Code |
+| `claude` | Yes | None | Claude via Kilo Code or Claude Code |
 
 #### Profile Structure
 
@@ -40,13 +44,15 @@ Each profile JSON file supports the following fields:
       "description": "Override description",
       "inputSchema": { }
     }
-  }
+  },
+  "ue_native_mcp_port": 8000
 }
 ```
 
-- **`image_support`**: When `true`, image-returning tools (e.g., `capture_widget`) emit standard MCP `{"type": "image"}` content blocks. When `false`, they emit plain text.
-- **`disabled_tools`**: Array of tool names to completely hide from the client's `tools/list` response.
-- **`tool_overrides`**: Per-tool overrides for `description` and `inputSchema`. Useful for injecting Chain-of-Thought reasoning parameters or stricter validation for models that need it.
+- **`image_support`**: When `true`, MCP `image` content items returned by UE 5.9 tools (such as `SceneCaptureToolset` captures or visual inspection tools) are passed through cleanly. When `false`, image blocks are omitted or summarized as text so text-only models do not error.
+- **`disabled_tools`**: Array of tool names to omit from `tools/list`.
+- **`tool_overrides`**: Per-tool overrides for `description` and `inputSchema` (applies to flattened tools when `bEnableToolSearch = false`, or meta-tools).
+- **`ue_native_mcp_port`**: Optional port override for UE 5.9's `/mcp` Streamable HTTP endpoint (overridden by `UE_MCP_URL`, `UE_MCP_PORT`, or `BRIDGE_HTTP_PORT`).
 
 #### Creating Custom Profiles
 
@@ -79,7 +85,7 @@ Configure the MCP server in your project's `kilo.jsonc`:
 }
 ```
 
-Copy the skill file to `.kilocode/rules/unreal-workflow.md` so the LLM follows the standard operating procedures.
+Copy the skill files from `skills/*/SKILL.md` into `.kilocode/rules/*.md` (handled automatically by `install.ps1`) so the LLM follows the standard operating procedures.
 
 ### Claude Code (CLI)
 
@@ -146,10 +152,10 @@ Run the installation script from the plugin directory:
 
 The script will:
 1. Ask for your target project root directory.
-2. Compile the bridge if needed.
-3. Copy the plugin files to `.agents/plugins/UnrealEngine/`.
+2. Copy `../AgentFramework/` into `<TargetProject>/Plugins/AgentFramework/` and `UnrealEngine/` into `<TargetProject>/.agents/plugins/UnrealEngine/`.
+3. Create `<TargetProject>/.agents/plugins/UnrealEngine/ExternalServer/.venv` and install both `ExternalServer/requirements.txt` and `bridge/requirements.txt`.
 4. Let you select one or more AI assistants (Antigravity 2.0, Kilo Code, Claude Code, and/or OpenAI Codex) — enter a comma-separated list such as `0,2`, or `all`.
-5. Link skills to the appropriate locations and generate the necessary MCP configuration for each selected assistant (`mcp_config.json`, `kilo.jsonc`, `.mcp.json`, and/or `.codex/config.toml`).
+5. Hard-link all skills under `skills/*/SKILL.md` and generate the MCP/permission configuration for each selected assistant (`mcp_config.json`, `kilo.jsonc`, `.mcp.json`, and/or `.codex/config.toml`).
 
 Re-running the script later lets you add additional assistants; existing configurations are left untouched.
 
@@ -157,18 +163,19 @@ Re-running the script later lets you add additional assistants; existing configu
 
 #### Workspace Level
 
-Copy the `UnrealEngine` folder into the `.agents/plugins/` directory at the root of your project:
+Copy `AgentFramework` into `Plugins/` and `UnrealEngine` into `.agents/plugins/` at the root of your UE 5.9 project:
 
 ```bash
-mkdir -p .agents/plugins
+mkdir -p Plugins .agents/plugins
+cp -r AgentFramework Plugins/
 cp -r UnrealEngine .agents/plugins/
 ```
 
 #### Global Level
 
-Copy to your user profile's global configuration directory:
+Copy to your user profile's global Antigravity configuration directory:
 
-* **Windows:** `C:\Users\<Username>\.gemini\config\plugins\UnrealEngine`
+* **Windows:** `$env:USERPROFILE\.gemini\config\plugins\UnrealEngine`
 * **Mac/Linux:** `~/.gemini/config/plugins/UnrealEngine`
 
 ### Run the Setup Conversation (One-time Setup)
@@ -194,19 +201,17 @@ Because `bridge/main.py` is imported once per MCP server process, changes to it 
 
 ## Interface Contracts
 
-### Client / Bridge ↔ Internal C++ Server
-- **Protocol**: JSON-RPC over stdio (Bridge) mapped to HTTP POST `/api/execute_tool` (Editor port 18777 by default, configurable via `-AgentFrameworkPort=` / `AGENTFRAMEWORK_HTTP_PORT`, or auto-discovered via Saved endpoint file).
-- **Authentication**: the listener binds to 127.0.0.1 only and rejects requests that carry an `Origin` header or a non-JSON `Content-Type`. Each editor launch writes a random `token` into `Saved/AgentFramework/endpoint.json`; every POST to `/api/execute_tool` must send it as `X-AgentFramework-Token` (the bridge, ExternalServer and `src/scripts/editor_endpoint.py` do). Restart long-lived bridges after updating the plugin.
-- **Standard Payload**:
-  - Request: `{"name": "<tool_name>", "arguments": { ... }}`
-  - Response: `{"bSuccess": true, "ResultMessage": "...", "Errors": [], "Warnings": []}`
+### Client / Bridge ↔ UE 5.9 Native MCP Server
+- **Upstream Transport**: `bridge/main.py` (`UE59StreamableHttpClient`) bridges MCP JSON-RPC 2.0 over stdio to UE 5.9's built-in `ModelContextProtocol` Streamable HTTP endpoint at `http://127.0.0.1:8000/mcp` (MCP protocol `2025-11-25`).
+- **Endpoint Configuration**: Override via `UE_MCP_URL` (full URL), `UE_MCP_PORT` / `BRIDGE_HTTP_PORT`, or `ue_native_mcp_port` inside the active profile JSON. Optional `BRIDGE_POLL_INTERVAL` controls online/offline tool-list polling cadence (default `2.0`s, backing off up to `30.0`s while offline).
+- **Session & Streaming**: Negotiates `MCP-Session-Id` on `initialize`, preserves SSE `text/event-stream` notifications (`_meta` / progress) and `nextCursor` pagination, translates `notifications/cancelled` to upstream `requestId`, and sends `DELETE /mcp` on bridge shutdown.
+- **Tool Discovery (`bEnableToolSearch = true`)**: Exposes `list_toolsets`, `describe_toolsets`, `describe_tools`, and `call_tool` dispatching module-qualified `<Module>.<Toolset>` names across UE 5.9's native toolsets and the 6 custom `AgentFrameworkActions.*` toolsets. *(For UE 5.7/5.8 port `18777` / `/api/execute_tool` docs, check out git tag `v1.1.0-ue5.8`.)*
 
-### Client ↔ External Python Server
-- **Protocol**: Standard MCP (JSON-RPC 2.0 over stdio).
+### Client ↔ External Python Server (`cpp-ast-rag`)
+- **Protocol**: Standard MCP (JSON-RPC 2.0 over stdio via `python -u -m ExternalServer.src.main`).
 - **Exposed Tools**:
   - `query_cpp_ast`
   - `generate_compile_commands`
   - `search_vector_db`
-  - `search_similar_blueprints`
-  - `index_all_blueprints`
-  - `format_t3d_layout`
+  - `inspect_macro_expansion` / `query_macro_expansion`
+  - `visualize_call_graph` / `query_call_graph`

@@ -1,48 +1,87 @@
-# UE-AgentFramework - Agent Guidance
+# Unreal Engine 5.9 Agent Guidelines
 
-This file contains workspace-specific rules, constraints, and instructions for AI agents operating in this project.
+You are an expert Unreal Engine 5.9 AI agent connected to UE 5.9's built-in **ModelContextProtocol** server (`http://127.0.0.1:8000/mcp`, proxied by `unrealengine`), UE 5.9's **ToolsetRegistry** (70+ built-in Engine Toolsets + 6 `AgentFrameworkActions` Toolsets), and the external **Clang AST & Documentation RAG Server** (`cpp-ast-rag`).
 
-## Agent Efficiency & Robustness Guidelines
-- **CRITICAL UNREAL ENGINE ROUTING**: If you are tasked with anything related to Unreal Engine (e.g., Blueprints, Editor, C++, Compilation, Asset modification), you **MUST** read `.agents/plugins/UnrealEngine/skills/unreal-instructions/SKILL.md` before taking any action. It is the mandatory entry point.
-- **MCP Tool Priority**: Always prefer native Unreal Engine MCP tools and dedicated skills over `execute_python_script`. Only use `execute_python_script` when no native tool or dedicated skill exists for the specific task. If you must use `execute_python_script`, you are required to provide a detailed justification in the `justification_why_native_tools_or_skills_are_insufficient` parameter. Using Python to bypass specific tools/skills is strictly prohibited. Never write custom script files or socket wrappers that manually issue HTTP/TCP requests to the Editor endpoint (e.g. `http://127.0.0.1:18777/api/execute_tool`) to invoke editor tools unless the agent's tool set does not allow calling them natively. If calling lazy-loaded tools, check if the system allows standard MCP execution first.
-- **Wait Durations & Scheduling**: Avoid active polling loops. When waiting for long background tasks, use your harness's native wait/scheduling mechanism if one exists (e.g. Antigravity's `schedule` tool with `DurationSeconds`); in harnesses without a scheduler (e.g. Claude Code), use a single bounded wait or a background command with an appropriate timeout instead. Ensure wait commands/timeouts for Editor start, compilation, and PIE loading are realistic (e.g., 30-90 seconds for Editor start, and 60-180 seconds for C++ compilation) to prevent premature check-in timeouts. When waiting for the Editor process to start up, schedule a generous timer (e.g., 30–90 seconds) rather than polling frequently. Run exactly one check to verify the listening port (e.g., port 18777) once the timer fires.
-- **Log Parsing Efficiency**: When reading active logs via commands, always use `Get-Content -Path <LogPath> -Tail <N>` (PowerShell) or `tail -n <N>` (Unix/macOS) instead of reading the entire file.
-- **Precision File Reading**: Use your harness's native file-reading tool (`view_file` in Antigravity, `Read` in Claude Code, or equivalent) rather than command-line utilities (like `cat` or `Get-Content`) to view source files. Specify start/end line ranges whenever possible to read only the target lines, keeping token overhead minimal.
-- **Handling Failures and Stuck Processes**: If an editor session, compilation command, or automation test fails or hangs, do not retry blindly. Check the tail of the log file, report the issue clearly, and immediately ask the user for assistance or verification.
-- **Human Verification (CAPTCHA) Protocol**: If a tool returns `REQUIRES_HUMAN_VERIFICATION` or mentions CAPTCHA / security check requirements, **never attempt to bypass it automatically**. Stop retrying immediately, notify the user via chat, explain that a verification check is active in Unreal Editor, and wait for human confirmation before re-issuing the command.
-- **Blueprint Node Generation**: When generating plain-text T3D representations of Blueprint nodes to import/paste, always include a unique, valid `NodeGuid` parameter (a 32-character uppercase hexadecimal string) for each node. If omitted, the imported nodes will lack GUIDs, causing "missing NodeGuid" warnings during cooking.
-- **Compilation Database**: Whenever you add new C++ source files, include new headers, or change project dependencies, automatically invoke the `generate_compile_commands` tool to regenerate the `compile_commands.json` database. This ensures the AST indexing and C++ context remain up-to-date.
-- **Minimal Module Dependencies**: Keep the `AgentFramework` plugin dependencies strictly minimal. If a specific UE feature (e.g. `Foliage`, `StateTree`, `GeometryCore`, `GameplayAbilities`, `Niagara`) is required for a user task or feature in a host game project, add the required dependency to the **host game project's `.Build.cs` file**, rather than expanding the plugin's dependencies.
-- **Windows Path Escaping**: When launching Unreal Engine or running `Build.bat` commands in PowerShell or cmd, use forward slashes (`/`) for paths or execute via `launch_editor.ps1`. Never include a trailing backslash inside double-quoted paths (e.g., use `"C:/Path/To/Project/Project.uproject"` instead of `"C:\Path\To\Project\"`). A trailing backslash inside double quotes (`\"`) escapes the closing quote on Windows, leading to argument corruption and the "Failed to open descriptor file" error.
+---
 
-## Project Knowledge & Navigation
-- **Consulting the Project Index**: The entry-point skill `project-index` is auto-loaded by the assistant runner, but the detailed sub-documents in the `references/` subdirectory are not. When you need deep architectural context, gameplay specifications, or system designs, you **MUST** manually read the relevant reference documents under `.agents/skills/project-index/references/` (e.g., `concepts.md`, `gameplay.md`, `systems.md`, `files_index.md`) using your native file-reading tool to align your work with the project's pillars and conventions.
-  * Always consult the documentation index and symbol directories (e.g., `files_index.md`) first to locate specific assets or screen classes before running generic directory searches (`Get-ChildItem -Recurse`).
-- **AST & Header Verification**:
-  * **Primary Lookup Tool**: Before calling any class method or reading Unreal C++ source files manually, you MUST use the `query_cpp_ast` MCP tool. This is the fastest and most accurate way to find class declarations, method signatures, UPROPERTIES, and function calls. Do NOT use generic text search (`grep_search`, `Grep`) or plain file reads on header files for basic symbol lookups.
-  * **Semantic Search**: Use `search_vector_db` to query Unreal Engine documentation and `search_similar_blueprints` to find relevant Blueprint assets by their described purpose.
-  * Do NOT guess names or properties (e.g., verify `GetCurrency()` instead of guessing `GetCurrencyPoints()`).
-  * Utilize the `compile_commands.json` database or lookups to trace unfamiliar types or includes.
-- **Automation Test Run Safeguards**:
-  * When running automated CLI tests via `UnrealEditor-Cmd.exe`, always append `; Quit` to the end of the `-ExecCmds` string (e.g. `-ExecCmds="Automation RunTests [ProjectOrTestName]; Quit"`). This prevents standalone engine processes from hanging indefinitely.
-- **Ticking Guardrails**:
-  * Never place high-overhead logic (like widget tree iterations, attribute matching, or regex lookups) inside ticking functions (`NativeTick`, `Tick`).
-  * Ensure any array access inside a ticking function is preceded by a bounds check or `INDEX_NONE` check to prevent Access Violation crashes.
+## 1. UE 5.9 Toolset Discovery & Invocation (`ToolsetRegistry`)
 
-## The Unreal Engine "Ponytail" Ladder
-When writing C++ or Blueprint code, you MUST follow this strict ladder of evaluation. Never write code without checking these rungs first:
+UE 5.9 uses lazy toolset discovery (`bEnableToolSearch = true`) via four MCP meta-tools:
+1. **`list_toolsets`**: Lists all registered module-qualified toolset names (`<Module>.<Toolset>`, e.g., `BlueprintToolsets.BlueprintDslToolset`, `EditorToolset.ActorToolset`, `AgentFrameworkActions.AgentFrameworkCppToolset`) in the running Unreal Editor.
+2. **`describe_toolsets`**: Returns the tool summaries inside one or more toolsets (`toolset_names`, `include_schemas`).
+3. **`describe_tools`**: Returns the full JSON input/output schema and access mode (`Read`, `Write`, `Execute`) for specific qualified tools (`tool_names` formatted as `<Module>.<Toolset>.<Tool>`).
+4. **`call_tool`**: Executes a tool by `toolset_name` (`<Module>.<Toolset>`), `tool_name`, and `arguments`. Typed USTRUCT / async string responses are returned wrapped in `{"returnValue": ...}`.
 
-1. **Does this need to exist? (YAGNI):** Avoid over-engineering complex C++ class hierarchies or massive Blueprint subsystems if a simpler, localized solution works.
-2. **Already in this codebase? (Reuse):** Aggressively search for existing project-specific `UBlueprintFunctionLibrary` classes, base classes, or macros before creating new ones.
-3. **Does the Engine do it? (Stdlib/Native Platform):** The most important rung for UE. Before writing custom logic, check:
-   * Is there a built-in node for this? (e.g., using `FMath` or `UKismetMathLibrary` instead of custom math).
-   * Is there an Engine subsystem that already handles this? (e.g., using *Enhanced Input*, *Navigation System*, or *Gameplay Ability System*).
-4. **Is there a Plugin for it? (Installed Dependency):** If the project has enabled specific plugins, utilize their features rather than writing redundant native code.
-5. **One line / One Node:** Can this be solved with a simple engine macro or a single specialized node?
-6. **Only then: The minimum that works.**
+### Key UE 5.9 Built-in Toolsets (Always Prefer Over Raw Scripting)
+- **Blueprints (`BlueprintToolsets` plugin):**
+  - `BlueprintToolsets.BlueprintDslToolset`: Textual Blueprint DSL (`Read`, `Write`, `Edit`, `Docs`, `Schema`, `Diff`, `FindNodeReferences`) — read and edit entire Blueprint graphs in a compact human/LLM-readable DSL!
+  - `BlueprintToolsets.BlueprintToolset`: Fine-grained Blueprint manipulation (`Create`, `CompileBlueprint`, `GetDefaultObject`, `ListGraphs`, `GetGraph`, `AddVariable`, `AddStructVariable`, `AddObjectVariable`, `ListVariables`, `SetVariableReplication`, `AddFunctionGraph`, `AddFunctionParam`, `AddInterface`, `CreateNode`, `AddEvent`, `AddEventDispatcher`, `AddComponentBoundEvent`, `ConnectPins`, `DisconnectPins`, `SetPinValue`, `ArrangeGraphLayered`, `ArrangeNodes`, `FindNodes`, etc.).
+- **UMG, CommonUI & MVVM:**
+  - `UMGEditor.WidgetBlueprintEditorSubsystem`: `CreateWidgetBlueprint`, `CreateAndAddWidget`, `RemoveWidget`, `MoveWidget`, `WrapWidgets`, `RenameWidget`, `ReplaceWidgetWithTemplate`, `ReplaceWidgetWithNamedSlot`, `ReplaceWidgetWithChild`, `GetWidgets`, `GetNamedSlots`, `SetNamedSlotContent`, `BindToEventProperty`, `ToggleWidgetAsVariable`, `ListWidgetBlueprints`, `ListWidgetClasses`, `CompileWidgetBlueprint`.
+  - `UMGEditor.UMGDebuggerSubsystem`: Runtime PIE widget lifetime recorder (`StartWidgetLifetimeLogging`, `StopWidgetLifetimeLogging`, `ClearWidgetLifetimeLog`, `GetWidgetLifetimeLogStatus`, `GetWidgetLifetimeEvents`, `ShowWidgetLifetimeLogWindow`).
+  - `WidgetStaticAnalysisToolset.WidgetStaticAnalysisToolset` (`DescribeWidget`, `GetWidgetTreeDepth`, `TraceWidgetPropertyOverrides`, `GetWidgetConnectionMap`, `GetViewModelConnectionMap`), `WidgetAnimationToolset.WidgetAnimationToolset`, `MVVMToolset.MVVMToolset`, `CommonUIToolset.CommonUIToolset`.
+- **StateTree, BehaviorTree, EQS & NavMesh:**
+  - `StateTreeToolset` plugin (`state_tree_toolset.state_tree.StateTreeToolset` Python toolset): `compile`, `mark_as_modified`, `request_ui_refresh`, `get_editor_data`, `get_root_states`, `get_all_states`, `get_children`, `get_tasks`, `get_enter_conditions`, `get_considerations`, `get_transitions`, `get_global_tasks`, `get_evaluators`, `add_sub_tree`, `add_child_state`, `add_task`, `add_blueprint_task`, `add_enter_condition`, `add_evaluator`, etc.
+  - `AIModuleToolset` plugin: `AIModuleToolset.BehaviorTreeToolset`, `AIModuleToolset.EnvironmentQueryToolset`; `NavMeshToolset.NavMeshToolset`.
+- **GAS & Gameplay Tags:**
+  - `GameplayTagsToolset.GameplayTagsToolset`; `GASToolsets` plugin: `GASToolsets.GameplayAbilityToolset`, `GASToolsets.GameplayCueToolset`, `GASToolsets.AttributeSetToolset`, `GASToolsets.AbilitySystemInspectorToolset`.
+- **Niagara, MetaSound, PCG, Materials & TextureGraph:**
+  - `NiagaraToolsets` plugin: `NiagaraToolsets.NiagaraToolset_Assets`, `NiagaraToolsets.NiagaraToolset_System`, `NiagaraToolsets.NiagaraToolset_Component`, `NiagaraToolsets.NiagaraToolset_Blueprint`, `NiagaraToolsets.NiagaraToolset_Info`.
+  - `MetaSoundToolset` plugin: `MetaSoundToolset.MetaSoundAuthoringToolset`, `MetaSoundToolset.MetaSoundDiscoveryToolset`, `MetaSoundToolset.MetaSoundInspectionToolset`.
+  - `PCGToolset` plugin: `PCGToolset.PCGToolset`, `PCGToolset.PCGSpatialToolset`.
+  - `EditorToolset` plugin: `EditorToolset.MaterialToolset`, `EditorToolset.MaterialInstanceToolset`; `TextureGraphToolset.TextureGraphTools`.
+- **Level, Actors, Components, Meshes, Physics & Geometry:**
+  - `EditorToolset` plugin: `EditorToolset.LevelToolset` (`AddToSceneFromClass`, `AddToSceneFromAsset`, `FindActors`, `RemoveFromScene`, etc.), `EditorToolset.ActorToolset` (`AddComponent`, `RemoveComponent`, `GetComponents`, `SetParentComponent`, `GetActorTransform`, `SetActorTransform`, etc.), `EditorToolset.ObjectToolset` (`ListProperties`, `GetPropertySchema`, `GetProperties`, `SetProperties`, `ResetProperties`), `EditorToolset.AssetToolset` (`FindAssets`, `LoadAsset`, `SaveAsset`, `ValidateAssets`, etc.).
+  - `EditorToolset.StaticMeshToolset`, `EditorToolset.SkeletalMeshToolset`, `EditorToolset.SoundWaveToolset`, `EditorToolset.TextureToolset`, `EditorToolset.DataAssetToolset`, `EditorToolset.DataTableToolset`, `EditorToolset.UserDefinedEnumToolset`, `EditorToolset.UserDefinedStructToolset`.
+  - `PhysicsToolsets.PhysicsAssetToolset`; `GeometryToolset` plugin (`geometry_toolset.geometry_ops.GeometryTools`).
+- **Sequencer, ControlRig & Movie Render Pipeline:**
+  - `AnimationAssistantToolset.SequencerDirectorToolset`, `AnimationAssistantToolset` Python (`animation_toolset.toolsets.controlrig.ControlRigTools`), `SequencerAnimMixerToolset` Python (`sequencer_animmixer_toolset.toolsets.mixer.SequencerAnimMixerTools`), `MovieRenderPipelineToolset` (AgentSkills for Movie Render Queue/Graph).
+- **PIE, Runtime UI & Input Verification:**
+  - `EditorToolset.EditorAppToolset` (`StartPIE`, `StopPIE`, `IsPIERunning`, `CaptureEditorImage`, `CaptureAssetImage`), `InputToolset.InputToolset` (`ApplyInput`, `IsInputApplied`), `SlateInspectorToolset.SlateInspectorToolset` (`Snapshot`, `GetUMGInfo`, `Screenshot`, `Click`, `Hover`, `Type`, `PressKey`, `Focus`, `WaitFor`, etc.), `SceneCaptureToolset.SceneCaptureToolset` (`Capture`, `CaptureGameViewport`, `CaptureActiveEditorView`, `CaptureEditorViewport`).
+- **Live Coding, Automation Tests, Console, Logs & Profiling:**
+  - `LiveCodingToolset.LiveCodingToolset` (`CompileLiveCoding`, `IsLiveCodingReady`, `EnableLiveCoding`), `AutomationTestToolset.AutomationTestToolset` (`DiscoverTests`, `ListTests`, `RunTests`, `RunTestsByFilter`, `GetTestResults`, `GetTestStatus`, `StopTests`), `ConsoleToolset.ConsoleToolset`, `ConsoleToolset.LogsToolset`, `PerfToolset.CsvProfilerToolset`, `PerfToolset.GpuProfilerToolset`, `PerfToolset.StatsToolset`, `RewindDebuggerToolset.RewindDebuggerToolset`.
+- **KnowledgeBase, FileSystem, Config, Plugins & Fab:**
+  - `KnowledgeBaseToolset.KnowledgeBaseTools` (`ListKnowledgeBases`, `ListKnowledgeBaseTags`, `QueryKnowledgeBase`, `GetKnowledgeEntry`, `WriteKnowledge`, `CreateMarkdownKnowledgeBase`), `FileSystemToolset.FileSystemToolset`, `ConfigSettingsToolset.ConfigSettingsToolset`, `PluginToolset.PluginToolset`, `GameFeaturesToolset.GameFeaturesToolset`, `FabToolset.FabToolset` (`SearchFabListings`, `GetFabListingDetails`, `SearchFabMyLibrary`, `InstallFabListing`, `FabSignIn`).
 
-**Lazy, not Negligent (Caveats):**
-You must NEVER compromise on safety:
-* **Null Checks:** Missing `IsValid()` or `nullptr` checks will hard-crash the UE Editor. This is non-negotiable.
-* **Memory Management:** Proper use of `UPROPERTY()` for garbage collection and `TWeakObjectPtr` where appropriate.
-* **Multiplayer Safety:** Do not take shortcuts that break Server/Client authority (e.g., skipping `Server_` RPCs or `ReplicatedUsing`).
+---
+
+## 2. AgentFramework UE 5.9 Extension Toolsets (6 Custom Toolsets)
+
+`AgentFramework` registers 6 additional `UToolsetDefinition` classes in `UToolsetRegistry` (qualified under `AgentFrameworkActions.<ClassNameWithoutU>`) for workflows not covered by UE 5.9's built-in toolsets:
+1. **`AgentFrameworkActions.AgentFrameworkCppToolset`**:
+   - `CreateCppClass`, `ScaffoldCppClass`, `RegenerateProjectFiles` (async), `GetCppReflectionInfo`.
+2. **`AgentFrameworkActions.AgentFrameworkBuildToolset`**:
+   - `BuildLighting`, `PackageProject` (async UAT `BuildCookRun`).
+3. **`AgentFrameworkActions.AgentFrameworkEnhancedInputAuthoringToolset`**:
+   - `CreateInputAction`, `CreateInputMappingContext`, `AddInputMapping`, `ConfigureInputMappingModifiersTriggers`.
+4. **`AgentFrameworkActions.AgentFrameworkAnimationAuthoringToolset`**:
+   - `CreateAnimBlueprint`, `CreateAnimMontage`, `ConfigureAnimMontage`, `CreateBlendSpace`, `GetSkeletonAnimationInfo`, `CreateIKRig`, `CreateIKRetargeter`, `ConfigureMotionMatchingDatabase`.
+5. **`AgentFrameworkActions.AgentFrameworkGASAuthoringToolset`**:
+   - `CreateAttributeSetClass`, `CreateGameplayEffectBlueprint`.
+6. **`AgentFrameworkActions.AgentFrameworkPIERuntimeToolset`**:
+   - `CallPIEActorFunction` (invokes a `BlueprintCallable` or `Exec` `UFunction` on a live PIE actor with optional `ParametersJson` and returns `ReturnValueJson` and `OutParametersJson`).
+
+---
+
+## 3. Clang AST & Documentation RAG Tools (`cpp-ast-rag`)
+
+- **`query_cpp_ast`**: Query cached C++ AST for class/symbol declarations, method signatures, `UPROPERTY` metadata, inheritance, and transitive callees.
+- **`inspect_macro_expansion` / `query_macro_expansion`**: Inspect preprocessor `#define` macros and Unreal reflection macros (`UCLASS`, `UPROPERTY`, `UFUNCTION`).
+- **`visualize_call_graph` / `query_call_graph`**: Generate multi-file call graphs and Mermaid `graph TD` diagrams.
+- **`generate_compile_commands`**: Regenerate `compile_commands.json` via UBT and re-index the C++ AST cache.
+- **`search_vector_db`**: Query the local Unreal Engine documentation vector database.
+
+---
+
+## 4. Coding & Safety Guardrails
+
+1. **Minimal Module Dependencies Directive:**
+   - Keep `AgentFramework` plugin `.Build.cs` dependencies strictly minimal. Add project-specific feature modules (`GameplayAbilities`, `StateTree`, `MassGameplay`, etc.) to the **host game project's `.Build.cs`**, never to `AgentFramework`.
+2. **Ticking Guardrails:**
+   - Never place `UGameplayStatics::GetAllActorsOfClass`, `LoadObject`, or unchecked array indexing inside `Tick()` or `NativeTick()`. Prefer event-driven delegates and timers.
+3. **Compilation & Live Coding:**
+   - After modifying existing `.cpp` function bodies, check `LiveCodingToolset.LiveCodingToolset.IsLiveCodingReady` and call `LiveCodingToolset.LiveCodingToolset.CompileLiveCoding`.
+   - After adding new C++ classes, headers, or `UPROPERTY`/`UFUNCTION` reflection macros, call `AgentFrameworkActions.AgentFrameworkCppToolset.RegenerateProjectFiles` and `generate_compile_commands` (recompile offline via UBT when Editor binaries must update).
+4. **Autonomous Verification:**
+   - Verify UI layouts with `WidgetStaticAnalysisToolset.WidgetStaticAnalysisToolset.DescribeWidget` or `EditorToolset.EditorAppToolset.CaptureAssetImage` / `SceneCaptureToolset.SceneCaptureToolset.CaptureEditorViewport`.
+   - Verify runtime gameplay in PIE using `EditorToolset.EditorAppToolset.StartPIE`, `InputToolset.InputToolset.ApplyInput`, `SlateInspectorToolset.SlateInspectorToolset` (`Snapshot`, `GetUMGInfo`, `Click`, `Screenshot`), `AgentFrameworkActions.AgentFrameworkPIERuntimeToolset.CallPIEActorFunction`, `UMGEditor.UMGDebuggerSubsystem`, and `ConsoleToolset.LogsToolset.GetLogEntries`.

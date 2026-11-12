@@ -279,8 +279,8 @@ def format_chunk(c: Dict[str, Any]) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="Parse Unreal Engine source headers and index Blueprint-exposed API reference.")
-    parser.add_argument("--source-dir", default="C:\\Program Files\\Epic Games\\UE_5.8\\Engine\\Source", help="UE engine Source directory path.")
-    parser.add_argument("--ue-version", default="5.8", help="Unreal Engine version (for directory naming).")
+    parser.add_argument("--source-dir", default="D:\\UE_5.9\\Engine\\Source" if Path("D:\\UE_5.9\\Engine\\Source").exists() else "C:\\Program Files\\Epic Games\\UE_5.9\\Engine\\Source", help="UE engine Source directory path.")
+    parser.add_argument("--ue-version", default="5.9", help="Unreal Engine version (for directory naming).")
     parser.add_argument("--output-dir", help="Explicit path to ChromaDB output directory.")
     parser.add_argument("--upload-github", action="store_true", help="Package and upload the final database to GitHub releases.")
     

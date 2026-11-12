@@ -2,71 +2,60 @@
 
 #include "AgentFrameworkActionsModule.h"
 #include "AgentFrameworkCoreModule.h"
-#include "AgentFrameworkHttpServer.h"
-#include "AgentFrameworkActionUtils.h"
-#include "AgentFrameworkActionRouter.h"
-#include "Misc/CoreDelegates.h"
-#include "UObject/Package.h"
-
-TSet<FName> FAgentFrameworkActionsModule::AgentDirtiedPackages;
-
-#if WITH_EDITOR
-#include "AssetRegistry/AssetRegistryModule.h"
-#include "Blueprint/AgentFrameworkBlueprintActions.h"
-static FDelegateHandle ExtraTagsDelegateHandle;
-#endif
+#include "ToolsetRegistry/UToolsetRegistry.h"
+#include "Toolsets/AgentFrameworkCppToolset.h"
+#include "Toolsets/AgentFrameworkBuildToolset.h"
+#include "Toolsets/AgentFrameworkEnhancedInputToolset.h"
+#include "Toolsets/AgentFrameworkAnimationToolset.h"
+#include "Toolsets/AgentFrameworkGASToolset.h"
+#include "Toolsets/AgentFrameworkPIEToolset.h"
 
 #define LOCTEXT_NAMESPACE "FAgentFrameworkActionsModule"
 
-void FAgentFrameworkActionsModule::StartupModule() { 
-	UE_LOG(LogAgentFramework, Log, TEXT("AgentFrameworkActions module started.")); 
-
-	// Bind ActionRouter telemetry delegate to ActionUtils telemetry recorder
-	FAgentFrameworkActionRouter::OnToolExecutionRecorded.AddStatic(&UAgentFrameworkActionUtils::RecordToolExecution); 
-
-#if WITH_EDITOR
-	ExtraTagsDelegateHandle = UObject::FAssetRegistryTag::OnGetExtraObjectTagsWithContext.AddStatic(&FAgentFrameworkBlueprintActions::HandleGetExtraObjectTags);
-	UPackage::PackageDirtyStateChangedEvent.AddRaw(this, &FAgentFrameworkActionsModule::OnPackageDirtyStateChanged);
-#endif
-
-	if (!IsRunningCommandlet())
+void FAgentFrameworkActionsModule::StartupModule()
+{
+	if (UToolsetRegistry::IsAvailable())
 	{
-		if (GEngine)
-		{
-			FAgentFrameworkHttpServer::Start();
-		}
-		else
-		{
-			FCoreDelegates::OnPostEngineInit.AddLambda([]() {
-				FAgentFrameworkHttpServer::Start();
-			});
-		}
+		UToolsetRegistry::RegisterToolsetClass(UAgentFrameworkCppToolset::StaticClass());
+		UToolsetRegistry::RegisterToolsetClass(UAgentFrameworkBuildToolset::StaticClass());
+		UToolsetRegistry::RegisterToolsetClass(UAgentFrameworkEnhancedInputAuthoringToolset::StaticClass());
+		UToolsetRegistry::RegisterToolsetClass(UAgentFrameworkAnimationAuthoringToolset::StaticClass());
+		UToolsetRegistry::RegisterToolsetClass(UAgentFrameworkGASAuthoringToolset::StaticClass());
+		UToolsetRegistry::RegisterToolsetClass(UAgentFrameworkPIERuntimeToolset::StaticClass());
+
+		UE_LOG(LogAgentFramework, Log, TEXT("AgentFrameworkActions: Registered 6 UE 5.9 UToolsetDefinition classes with UToolsetRegistry."));
+	}
+	else
+	{
+		UE_LOG(LogAgentFramework, Warning, TEXT("AgentFrameworkActions: UToolsetRegistry is not available during StartupModule."));
 	}
 }
 
-void FAgentFrameworkActionsModule::ShutdownModule() { 
-#if WITH_EDITOR
-	if (ExtraTagsDelegateHandle.IsValid())
+void FAgentFrameworkActionsModule::ShutdownModule()
+{
+	if (UToolsetRegistry::IsAvailable())
 	{
-		UObject::FAssetRegistryTag::OnGetExtraObjectTagsWithContext.Remove(ExtraTagsDelegateHandle);
-		ExtraTagsDelegateHandle.Reset();
+		UToolsetRegistry::UnregisterToolsetClass(UAgentFrameworkPIERuntimeToolset::StaticClass());
+		UToolsetRegistry::UnregisterToolsetClass(UAgentFrameworkGASAuthoringToolset::StaticClass());
+		UToolsetRegistry::UnregisterToolsetClass(UAgentFrameworkAnimationAuthoringToolset::StaticClass());
+		UToolsetRegistry::UnregisterToolsetClass(UAgentFrameworkEnhancedInputAuthoringToolset::StaticClass());
+		UToolsetRegistry::UnregisterToolsetClass(UAgentFrameworkBuildToolset::StaticClass());
+		UToolsetRegistry::UnregisterToolsetClass(UAgentFrameworkCppToolset::StaticClass());
 	}
-	UPackage::PackageDirtyStateChangedEvent.RemoveAll(this);
-#endif
-	FAgentFrameworkHttpServer::Stop();
-	UE_LOG(LogAgentFramework, Log, TEXT("AgentFrameworkActions module shut down.")); 
 }
-FAgentFrameworkActionsModule& FAgentFrameworkActionsModule::Get() { return FModuleManager::LoadModuleChecked<FAgentFrameworkActionsModule>("AgentFrameworkActions"); }
-bool FAgentFrameworkActionsModule::IsAvailable() { return FModuleManager::Get().IsModuleLoaded("AgentFrameworkActions"); }
+
+
+
+FAgentFrameworkActionsModule& FAgentFrameworkActionsModule::Get()
+{
+	return FModuleManager::LoadModuleChecked<FAgentFrameworkActionsModule>("AgentFrameworkActions");
+}
+
+bool FAgentFrameworkActionsModule::IsAvailable()
+{
+	return FModuleManager::Get().IsModuleLoaded("AgentFrameworkActions");
+}
 
 #undef LOCTEXT_NAMESPACE
-
-void FAgentFrameworkActionsModule::OnPackageDirtyStateChanged(UPackage* ModifiedPackage)
-{
-	if (ModifiedPackage && !ModifiedPackage->IsDirty())
-	{
-		AgentDirtiedPackages.Remove(ModifiedPackage->GetFName());
-	}
-}
 
 IMPLEMENT_MODULE(FAgentFrameworkActionsModule, AgentFrameworkActions)

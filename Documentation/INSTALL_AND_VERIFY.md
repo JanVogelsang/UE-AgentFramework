@@ -33,7 +33,7 @@ The C++ Editor plugin handles game-thread operations and must be present in the 
    # Example UBT headless build command:
    # Locate UnrealEngine path (e.g., from registry HKLM:\SOFTWARE\EpicGames\Unreal Engine)
    # Or invoke the project's build batch file if available:
-   & "C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat" AgentFrameworkTestEditor Win64 Development "$env:USERPROFILE\Documents\Unreal Projects\AgentFrameworkTest\AgentFrameworkTest.uproject" -waitmutex
+   & "C:\Program Files\Epic Games\UE_5.9\Engine\Build\BatchFiles\Build.bat" AgentFrameworkTestEditor Win64 Development "$env:USERPROFILE\Documents\Unreal Projects\AgentFrameworkTest\AgentFrameworkTest.uproject" -waitmutex
    ```
 
 ## 2. Install the Agent Plugin (`UnrealEngine`)
@@ -76,14 +76,14 @@ The Agent plugin sets up the Python AST server, the MCP JSON-RPC bridge, and age
 
 To verify the integration manually, you must open an agent conversation *inside* the target project workspace (`AgentFrameworkTest`):
 
-1. **Start the Editor**: Ensure the `AgentFrameworkTest` Unreal Engine Editor is running (this hosts the internal C++ server on port `18777`).
+1. **Start the Editor**: Ensure the `AgentFrameworkTest` Unreal Engine 5.9 Editor is running with UE 5.9's `ModelContextProtocol` plugin enabled (hosting the Streamable HTTP MCP server at `http://127.0.0.1:8000/mcp`).
 2. **Initialize Workspace**: In the agent conversation for `AgentFrameworkTest`, run the initial setup prompt:
    > "Run project setup and index the project"
 
    This triggers the `unreal-setup` skill, updates the `unreal-instructions` skill, and creates the `project-index` skill inside `AgentFrameworkTest`.
-3. **Test Queries**: Verify the Dual-MCP servers are functioning by asking the agent to perform specific Unreal Engine tasks:
-   - **C++ AST Server**: *"Find the declaration for the class AAgentFrameworkTestGameModeBase"*
-   - **Editor Loopback Server**: *"Extract the Blueprint variables of BP_TestBlueprint"*
+3. **Test Queries**: Verify the Dual-MCP servers (`unrealengine` via `UnrealEngine/bridge/main.py` -> `http://127.0.0.1:8000/mcp`, and `cpp-ast-rag` via `UnrealEngine/ExternalServer/src/main.py`) are functioning by asking the agent to perform specific Unreal Engine tasks:
+   - **C++ AST Server (`cpp-ast-rag`)**: *"Find the declaration for the class AAgentFrameworkTestGameModeBase"* (uses `query_cpp_ast`)
+   - **UE 5.9 Native MCP Server (`unrealengine`)**: *"List available toolsets (`list_toolsets`) and inspect the Blueprint variables of `BP_TestBlueprint` via `call_tool` (`BlueprintToolsets.BlueprintToolset.ListVariables` / `BlueprintToolsets.BlueprintDslToolset.Read`)"*
 
 ### Autonomous Agent Verification (Target Workspace Verification)
 
@@ -99,8 +99,8 @@ Inside the target workspace, the verifying agent should run:
 
    This triggers the `unreal-setup` skill, updates the `unreal-instructions` skill, and creates the `project-index` skill inside `AgentFrameworkTest`.
 2. **Test Queries**: Verify the Dual-MCP servers are functioning by executing these tool queries:
-   - **C++ AST Server**: *"Find the declaration for the class AAgentFrameworkTestGameModeBase"*
-   - **Editor Loopback Server** (Ensure Unreal Editor is running on port `18777`): *"Extract the Blueprint variables of BP_TestBlueprint"*
+   - **C++ AST Server (`cpp-ast-rag`)**: *"Find the declaration for the class AAgentFrameworkTestGameModeBase"*
+   - **UE 5.9 Native MCP Server (`unrealengine`)** (Ensure Unreal Engine 5.9 Editor is running with `/mcp` on `http://127.0.0.1:8000/mcp`): *"Discover toolsets with `list_toolsets`, inspect schemas with `describe_toolsets`, and read the Blueprint variables of `BP_TestBlueprint` via `call_tool` (`BlueprintToolsets.BlueprintToolset.ListVariables` / `BlueprintToolsets.BlueprintDslToolset.Read`)"*
 
 ## 4. Run Automated Integration Tests
 
@@ -108,10 +108,10 @@ The `UE-AgentFramework` repository contains an automated E2E test suite (`pytest
 
 ### Running Tests
 
-1. **Verify Editor Status**: Ensure the `AgentFrameworkTest` Unreal Engine Editor is running (listening on port `18777`).
+1. **Verify Editor Status**: Ensure the `AgentFrameworkTest` Unreal Engine 5.9 Editor is running with `ModelContextProtocol` active (`http://127.0.0.1:8000/mcp`).
 2. **Ensure Python Interpreter**: Ensure you are using the correct Python interpreter (usually the Windows Store app python, avoiding MSYS2).
 3. **Execute Tests**: Run the automated test wrapper from the `UE-AgentFramework` root:
    ```powershell
    powershell -File .\Tests\run_tests.ps1
    ```
-   This will spin up the mock client, interface with the target project's `AgentFrameworkTest` editor via port `18777`, and validate all core features (Blueprint Schema Retrieval, Graph Injection, UHT Reflection, AST Queries, etc.).
+   This runs the Python unit and bridge test suites (`UnrealEngine/bridge/main.py` proxying `/mcp`, Clang AST/RAG server tests, and live `/mcp` checks when the editor is running).

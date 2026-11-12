@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # Default paths
-DEFAULT_WATCH_DIR = Path("c:/Users/janv1/Documents/Unreal Projects/AgentFrameworkTest/Source")
+DEFAULT_WATCH_DIR = Path.home() / "Documents" / "Unreal Projects" / "AgentFrameworkTest" / "Source"
 DEFAULT_DB_PATH = PROJECT_ROOT / "UnrealEngine" / "ExternalServer" / "ast_cache.db"
 
 # Global test configuration
